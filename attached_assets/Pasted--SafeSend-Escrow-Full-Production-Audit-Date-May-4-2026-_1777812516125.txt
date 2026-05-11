@@ -1,0 +1,335 @@
+# SafeSend Escrow — Full Production Audit
+**Date:** May 4, 2026  
+**Codebase:** escrowformarket.zip  
+**Verdict: Viable product — pursue it. Fix the critical issues before any real money moves.**
+
+---
+
+## Product Viability Assessment
+
+**Short answer: Yes, this is worth pursuing.**
+
+The core escrow loop is genuinely well-engineered. The state machine is explicit and enforced. Optimistic concurrency (version column) prevents race conditions on deal transitions. Stripe transfers use idempotency keys so double-payment is impossible. The 48-hour auto-release job with the signature-required gate is a thoughtful design. The webhook pipeline — raw body capture, HMAC verification, idempotency via DB unique key, structured logging with Pino — is production-grade work.
+
+The market gap is real. Trade Me Marketplace has no built-in escrow. Facebook Marketplace NZ has no buyer protection. Peer-to-peer vehicle sales, vintage gear, collectibles — there's genuine willingness-to-pay for a $5–$100 fee that prevents fraud. The $2,500 NZD cap positions it squarely in the personal marketplace space and out of the regulated financial services territory (confirmed by your earlier legal brief).
+
+The problems below are real but fixable in a single focused session. None of them require architectural changes.
+
+---
+
+## 🔴 CRITICAL — Fix Before Any Real Money
+
+---
+
+### C1. Admin Dashboard Password is Hardcoded "admin123" in Frontend JavaScript
+
+**File:** `artifacts/safesend/src/pages/admin/dashboard.tsx` lines 30–35
+
+```ts
+const handleLogin = (e: React.FormEvent) => {
+  if (adminKey === "admin123") {       // ← hardcoded in the JS bundle
+    setIsAuthenticated(true);
+  } else {
+    alert("Invalid admin key for MVP demo (hint: admin123)");
+  }
+};
+```
+
+The "authentication" here is client-side only. Anyone who opens DevTools, searches the JS bundle for "admin123", or simply opens `/admin` and types the hint can access the full admin panel. Worse, the admin panel calls real API endpoints (`/api/admin/deals`, `/api/admin/stats`, `/api/admin/deals/:id/resolve-dispute`) — and those endpoints correctly use `requireAuth + requireAdmin`. But the frontend lets anyone *appear* authenticated locally, which means:
+
+- All admin data is visible to anyone who finds "admin123"
+- The resolve-dispute action actually POSTs to the real API with a real session — so this is a real attack surface, not just a display issue
+
+**Fix:** Remove the client-side password gate entirely. The admin panel should redirect to `/auth/login` for a magic-link sign-in. `requireAdmin` on the server already gates all the actual data. The frontend just needs to use the same session as every other authenticated user.
+
+---
+
+### C2. `GET /deals` and `GET /deals/:dealId` Have No Authentication
+
+**File:** `artifacts/api-server/src/routes/deals.ts` lines 89, 114
+
+```ts
+router.get("/deals", async (req, res) => { ... });           // no requireAuth
+router.get("/deals/:dealId", async (req, res) => { ... });   // no requireAuth
+```
+
+`GET /deals?email=victim@gmail.com` returns every deal that email is party to — amounts, counterparty emails, tracking numbers, dispute reasons. No session required. Anyone who knows (or guesses) an email address can enumerate their complete transaction history.
+
+`GET /deals/:dealId` returns full deal details including both parties' emails, the amount, and the Stripe PaymentIntent ID to any unauthenticated caller who knows or guesses the deal ID format (UUID — easily brute-forced if the ID space is small).
+
+**Fix:**
+```ts
+// Add requireAuth to both:
+router.get("/deals", requireAuth, async (req, res) => {
+  // Replace email query param with session email — user can only see their own deals
+  const email = sessionEmail(req);
+  if (!email) { res.status(401).json({ error: "Not authenticated" }); return; }
+  // remove the email/role query params entirely or validate that email === sessionEmail
+});
+
+router.get("/deals/:dealId", requireAuth, async (req, res) => {
+  // After fetching deal, verify sessionEmail is buyer or seller
+  const email = sessionEmail(req);
+  if (deal.buyerEmail !== email && deal.sellerEmail !== email) {
+    res.status(403).json({ error: "Access denied" }); return;
+  }
+});
+```
+
+Similarly `GET /deals/:dealId/tracking` in `tracking.ts` has no auth — the full tracking history (including delivery address inferred from courier events) is public to anyone with a deal ID.
+
+---
+
+### C3. CORS Accepts Any Origin With Credentials
+
+**File:** `artifacts/api-server/src/app.ts` line 28
+
+```ts
+app.use(cors({ origin: true, credentials: true }));
+```
+
+`origin: true` reflects whatever `Origin` header is sent — it's equivalent to a wildcard but worse because it's combined with `credentials: true`. This means any website in the world can make authenticated cross-origin requests to your API using the visitor's session cookie. A malicious site could silently read victim deal data, trigger cancellations, or raise disputes.
+
+**Fix:**
+```ts
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? "http://localhost:3000")
+  .split(",").map(s => s.trim());
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) callback(null, true);
+    else callback(new Error(`Origin ${origin} not allowed`));
+  },
+  credentials: true,
+}));
+```
+
+Set `ALLOWED_ORIGINS=https://safesend.nz,https://www.safesend.nz` in production.
+
+---
+
+### C4. TrackingMore Webhook HMAC Verification is Optional — Skipped With No Signature Header
+
+**File:** `artifacts/api-server/src/routes/webhooks.ts` line 140
+
+```ts
+if (apiKey && signature) {
+  // verify HMAC
+}
+// If no signature header is sent, falls straight through to processing
+```
+
+An attacker who knows your `/api/webhooks/trackingmore` URL (it's not secret) can POST a fake delivery webhook with `{"tracking_number":"real-number","status":"Delivered"}` and no signature header. The server will mark the deal as delivered, start the 48-hour auto-release clock, and eventually pay the seller — for a package that was never actually delivered.
+
+**Fix:** Reject requests with no signature when the API key is configured:
+```ts
+if (apiKey) {
+  if (!signature) {
+    res.status(401).json({ error: "Missing HMAC signature" });
+    return;
+  }
+  const expected = crypto.createHmac("sha256", apiKey).update(rawBody).digest("hex");
+  if (signature !== expected) {
+    logger.warn("TrackingMore HMAC mismatch");
+    res.status(401).json({ error: "Invalid signature" });
+    return;
+  }
+}
+```
+
+The AfterShip webhook (`/api/webhooks/aftership`) has the same issue.
+
+---
+
+## 🟠 HIGH — Fix Before Launch
+
+---
+
+### H1. `GET /deals` Lets Anyone Look Up Any Person's Deals by Email
+
+**File:** `artifacts/api-server/src/routes/deals.ts` line 89  
+*(Related to C2 — calling it out separately because the fix is different)*
+
+Even if you add auth to `GET /deals`, the current design accepts `?email=` as a query parameter. Once authenticated, User A could pass `email=userB@email.com` and see User B's deals. The email param must be replaced by the session email server-side — the client should not be trusted to say whose deals they're fetching.
+
+---
+
+### H2. Admin Stats Endpoint Loads All Deals Into Memory
+
+**File:** `artifacts/api-server/src/routes/admin.ts` line 126
+
+```ts
+const allDeals = await db.select().from(dealsTable);  // no LIMIT
+for (const deal of allDeals) { ... }
+```
+
+At 10,000 deals this will be slow. At 100,000 it will OOM the server. Replace with SQL aggregations:
+
+```sql
+SELECT state, COUNT(*) as count, SUM(amount_nzd) as volume, SUM(fee_nzd) as fee
+FROM deals GROUP BY state;
+```
+
+---
+
+### H3. No Global Error Handler — Unhandled Exceptions Leak Stack Traces
+
+**File:** `artifacts/api-server/src/app.ts` — no error middleware registered
+
+Without a global error handler, Express's default handler returns the full stack trace in the response body. Stack traces reveal file paths, library versions, and internal logic. Add before `export default app`:
+
+```ts
+app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
+  logger.error({ err }, "Unhandled error");
+  res.status(500).json({ error: "An unexpected error occurred" });
+});
+```
+
+---
+
+### H4. No Database Indexes on High-Frequency Query Columns
+
+**File:** `lib/db/src/schema/deals.ts` — no index declarations
+
+Every `GET /deals?email=` does a full table scan on `buyer_email` and `seller_email`. Every TrackingMore webhook lookup scans `tracking_number`. Add:
+
+```ts
+import { index } from "drizzle-orm/pg-core";
+
+export const dealsTable = pgTable("deals", { ... }, (table) => ({
+  buyerEmailIdx: index("idx_deals_buyer_email").on(table.buyerEmail),
+  sellerEmailIdx: index("idx_deals_seller_email").on(table.sellerEmail),
+  trackingNumberIdx: index("idx_deals_tracking_number").on(table.trackingNumber),
+  stateIdx: index("idx_deals_state").on(table.state),
+  deliveredAtIdx: index("idx_deals_delivered_at").on(table.deliveredAt),
+}));
+```
+
+`deliveredAt` is critical for the `autoReleaseDelivered` job which runs every hour.
+
+---
+
+### H5. `console.log` Prints Magic Link Tokens to Stdout in Dev Fallback
+
+**File:** `artifacts/api-server/src/lib/email.ts` line 15
+
+```ts
+console.log(`\n🔗 Magic link for ${to}: ${magicLink}\n`);
+```
+
+The magic link contains the one-time auth token. If this fallback ever triggers in a production environment (e.g. `RESEND_API_KEY` expires or is accidentally unset), the token will appear in production logs — which are often aggregated to external services, retained indefinitely, and accessible to anyone with log access.
+
+The `logger.info({ to, magicLink }, ...)` call one line above already logs it to Pino (structured JSON). Remove the `console.log`. The Pino log is sufficient for development debugging and is controlled by log level.
+
+---
+
+## 🟡 MEDIUM — Fix Within First Week
+
+---
+
+### M1. `refundDeal` Uses `reason: "fraudulent"` for All Admin Refunds
+
+**File:** `artifacts/api-server/src/lib/refund-deal.ts` line 17
+
+```ts
+await stripe.refunds.create({
+  payment_intent: deal.stripePaymentIntentId,
+  reason: "fraudulent",   // ← wrong
+});
+```
+
+`fraudulent` tells Stripe the transaction was fraud. This affects your Stripe dispute rate, may trigger Stripe's fraud monitoring on your account, and is factually wrong — most dispute resolutions are `requested_by_customer` or `duplicate`. Use `"requested_by_customer"` as the default, and consider accepting an admin-supplied reason.
+
+---
+
+### M2. TrackingMore Idempotency Key Includes `Date.now()` — Not Idempotent
+
+**File:** `artifacts/api-server/src/routes/webhooks.ts` line 162
+
+```ts
+const idempotencyKey = `trackingmore:${trackingNumber}:${payload.status ?? "unknown"}:${Date.now()}`;
+// (For tracking we allow re-insertion...)
+```
+
+The comment acknowledges this isn't really used. But the Stripe webhook above does use a proper idempotency check via `markSeen()`. If TrackingMore retries a failed webhook (which it will — it retries on non-200 responses), the same checkpoint gets inserted multiple times. The `trackingEventsTable` has no unique constraint to prevent this. Add a unique constraint on `(deal_id, event_at, status)` and handle the conflict-ignore at the DB level as intended.
+
+---
+
+### M3. AfterShip Webhook Route is Dead Code
+
+**File:** `artifacts/api-server/src/routes/webhooks.ts` line ~240
+
+The `/api/webhooks/aftership` route is mounted but the app has migrated to TrackingMore. Dead routes are attack surface — they process real data and have the same HMAC bypass issue as C4. Remove it, or explicitly document why it's kept as a fallback and ensure the HMAC check is mandatory.
+
+---
+
+### M4. `autoReleaseDelivered` Doesn't Explicitly Filter Out Disputed Deals
+
+**File:** `artifacts/api-server/src/jobs/verify-shipments.ts` line 35
+
+The query filters for `state = 'delivered'` and `delivered_at < 48h ago`. The state machine correctly prevents `delivered → complete` from happening if the deal is in `disputed` state (a dispute transitions to `disputed` before `complete` is possible). But the job selects all `delivered` deals — and a deal could theoretically be in `delivered` state while a dispute is being raised in the same moment (race condition). The state machine's `assertValidTransition` inside `releaseDealFunds` will catch it, but it's cleaner to exclude disputed deals explicitly in the query.
+
+---
+
+### M5. Session Secret Has a Dev Fallback in `app.ts`
+
+**File:** `artifacts/api-server/src/app.ts` line 36
+
+```ts
+secret: process.env.SESSION_SECRET ?? "dev-secret-change-in-production",
+```
+
+The startup check (`checkStartupRequirements`) correctly detects this and throws — but only in production (`process.env.NODE_ENV === "production"`). On Replit deployments where `NODE_ENV` may not be set, this silently uses the fallback. Move the guard to `app.ts` itself, unconditionally:
+
+```ts
+if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET === "dev-secret-change-in-production") {
+  throw new Error("SESSION_SECRET must be set to a strong random value");
+}
+```
+
+---
+
+## ✅ What's Done Well (genuinely)
+
+- **State machine** — explicit legal transitions, `assertValidTransition` throws on illegal moves, every transition is recorded in `state_transitions` with actor and timestamp. Full audit trail.
+- **Optimistic concurrency** — version column on deals prevents two simultaneous actions (e.g. buyer releasing funds and auto-release job) from double-processing.
+- **Stripe idempotency** — `idempotencyKey: transfer:${deal.id}` on the transfer means even if `releaseDealFunds` is called twice, only one transfer fires.
+- **Webhook HMAC** — Stripe webhook verification is correct and mandatory (fails hard when secret not set).
+- **Raw body handling** — correct mount order in `app.ts` (raw body before JSON parser for webhook routes). The `extractRawBody` supertest compatibility shim is clever.
+- **Startup checks** — `checkStartupRequirements()` hard-exits on misconfiguration. `TEST_BYPASS_AUTH=1` in production kills startup.
+- **Magic link auth** — UUID tokens, 30-minute expiry, single-use enforcement, proper `used` flag update before session creation.
+- **Fee calculation** — 4% with $5 minimum, stored as separate columns (`amount_nzd`, `fee_nzd`, `total_nzd`) so accounting is always reconstructable.
+- **Pino structured logging** — proper JSON logs with deal IDs, no PII in log lines (emails go through `{ email }` structured fields, not string interpolation).
+- **Cancellation logic** — the shipped-deal cancellation rules (flagged vs verified vs pending) are correctly implemented with role-specific gates.
+- **Auto-release 48h** — uses the same `releaseDealFunds` function as the manual route, so the idempotency key protects against both paths firing.
+
+---
+
+## Priority Fix Order for Replit Agent
+
+```
+1. C1  — Remove hardcoded "admin123" from frontend; redirect to magic-link login
+2. C2  — Add requireAuth + participant check to GET /deals and GET /deals/:dealId
+3. C3  — Replace cors({ origin: true }) with explicit allowlist from ALLOWED_ORIGINS env var
+4. C4  — Make TrackingMore + AfterShip HMAC verification mandatory when API key is set
+5. H1  — Replace ?email= query param in GET /deals with session email server-side
+6. H3  — Add global Express error handler to app.ts
+7. H4  — Add Drizzle indexes on buyer_email, seller_email, tracking_number, state, delivered_at
+8. H5  — Remove console.log of magic link token from email.ts
+9. M1  — Change refund reason from "fraudulent" to "requested_by_customer"
+10. M2  — Add unique constraint on tracking_events (deal_id, event_at, status)
+11. M3  — Remove dead AfterShip webhook route
+12. H2  — Replace allDeals memory load in admin stats with SQL GROUP BY aggregation
+```
+
+---
+
+## Commercial Verdict
+
+**Pursue it.** The escrow mechanic works end-to-end — state machine, Stripe PaymentIntents, Connect transfers, courier verification, auto-release. That's the hard part and it's done correctly. The issues above are mostly auth guard gaps and one scary frontend password — none of them require rearchitecting anything.
+
+The fee model is viable: 4% with a $5 floor on a $2,500 cap = $5–$100 per transaction. At 50 completed deals/month that's $250–$5,000 NZD monthly revenue from a single-operator app with zero marginal cost per transaction beyond Stripe fees (~1.7% + $0.30 NZD for domestic cards).
+
+The regulatory position is clean — you're holding funds in Stripe escrow, not operating as a financial institution. The legal brief from earlier is the right framing.
+
+The one real business risk is Trust & Safety at scale. Admin dispute resolution is currently a single endpoint that one person manually calls. That's fine for 50 deals/month. At 500/month you'll need a proper dispute queue, evidence upload, and SLA timers. Plan for that before you market heavily.

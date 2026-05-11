@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SafeSend — Deal Creation Flows</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f8fafc; color: #1e293b; }
+
+  .header { background: #0f766e; color: white; padding: 24px 32px; }
+  .header h1 { font-size: 22px; font-weight: 700; }
+  .header p { font-size: 14px; opacity: 0.85; margin-top: 4px; }
+
+  .tabs { display: flex; gap: 0; border-bottom: 2px solid #e2e8f0; background: white; padding: 0 32px; }
+  .tab { padding: 14px 24px; font-size: 14px; font-weight: 600; cursor: pointer; border-bottom: 3px solid transparent; margin-bottom: -2px; color: #64748b; transition: all 0.15s; white-space: nowrap; }
+  .tab.active { color: #0f766e; border-bottom-color: #0f766e; }
+  .tab:hover:not(.active) { color: #334155; }
+
+  .content { max-width: 960px; margin: 0 auto; padding: 32px; }
+
+  .flow-container { display: grid; gap: 24px; }
+
+  .verdict { display: flex; align-items: flex-start; gap: 12px; padding: 16px 20px; border-radius: 10px; margin-bottom: 24px; }
+  .verdict.recommended { background: #f0fdf4; border: 1px solid #bbf7d0; }
+  .verdict.neutral { background: #fefce8; border: 1px solid #fde68a; }
+  .verdict.avoid { background: #fff1f2; border: 1px solid #fecdd3; }
+  .verdict-icon { font-size: 20px; flex-shrink: 0; margin-top: 1px; }
+  .verdict-title { font-weight: 700; font-size: 15px; }
+  .verdict-text { font-size: 13px; color: #475569; margin-top: 3px; line-height: 1.5; }
+
+  .steps { display: flex; flex-direction: column; gap: 0; }
+  .step { display: flex; gap: 16px; position: relative; }
+  .step:not(:last-child)::after { content: ''; position: absolute; left: 19px; top: 44px; bottom: -12px; width: 2px; background: #e2e8f0; }
+  .step-num { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; flex-shrink: 0; }
+  .step-num.seller { background: #0f766e; color: white; }
+  .step-num.buyer { background: #0369a1; color: white; }
+  .step-num.system { background: #7c3aed; color: white; }
+  .step-num.both { background: #d97706; color: white; }
+  .step-body { padding-bottom: 24px; flex: 1; }
+  .step-who { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+  .step-who.seller { color: #0f766e; }
+  .step-who.buyer { color: #0369a1; }
+  .step-who.system { color: #7c3aed; }
+  .step-who.both { color: #d97706; }
+  .step-title { font-weight: 600; font-size: 15px; margin-bottom: 4px; }
+  .step-desc { font-size: 13px; color: #475569; line-height: 1.5; }
+  .step-detail { margin-top: 8px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; font-size: 12px; color: #334155; line-height: 1.6; }
+  .step-detail code { background: #e2e8f0; border-radius: 3px; padding: 1px 5px; font-family: monospace; }
+
+  .pros-cons { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 24px; }
+  .pros, .cons { padding: 14px 16px; border-radius: 8px; font-size: 13px; }
+  .pros { background: #f0fdf4; border: 1px solid #bbf7d0; }
+  .cons { background: #fff1f2; border: 1px solid #fecdd3; }
+  .pros h4 { color: #15803d; font-weight: 700; margin-bottom: 8px; font-size: 13px; }
+  .cons h4 { color: #be123c; font-weight: 700; margin-bottom: 8px; font-size: 13px; }
+  .pros li, .cons li { margin-left: 16px; margin-bottom: 4px; color: #475569; line-height: 1.4; }
+
+  .email-preview { background: white; border: 1px solid #e2e8f0; border-radius: 10px; margin-top: 16px; overflow: hidden; }
+  .email-header { background: #f8fafc; padding: 12px 16px; border-bottom: 1px solid #e2e8f0; font-size: 12px; color: #475569; }
+  .email-header strong { color: #1e293b; }
+  .email-body { padding: 20px; font-size: 13px; line-height: 1.7; }
+  .email-btn { display: inline-block; margin: 12px 0; padding: 10px 20px; background: #0f766e; color: white; border-radius: 6px; font-weight: 600; font-size: 13px; text-decoration: none; }
+  .email-amount { font-size: 22px; font-weight: 700; color: #0f766e; margin: 8px 0; }
+
+  .comparison { background: white; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; margin-top: 24px; }
+  .comparison table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .comparison th { background: #f8fafc; padding: 12px 16px; text-align: left; font-weight: 700; border-bottom: 2px solid #e2e8f0; }
+  .comparison td { padding: 12px 16px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+  .comparison tr:last-child td { border-bottom: none; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; }
+  .tag.green { background: #dcfce7; color: #15803d; }
+  .tag.yellow { background: #fef9c3; color: #92400e; }
+  .tag.red { background: #fee2e2; color: #991b1b; }
+
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>SafeSend — Deal Creation Flow Comparison</h1>
+  <p>Three industry models analysed. Click each tab to explore the flow, emails, and trade-offs.</p>
+</div>
+
+<div class="tabs">
+  <div class="tab active" onclick="show('seller')">Model 1: Seller Creates ★</div>
+  <div class="tab" onclick="show('buyer')">Model 2: Buyer Creates</div>
+  <div class="tab" onclick="show('joint')">Model 3: Joint Link</div>
+  <div class="tab" onclick="show('compare')">Side-by-Side Comparison</div>
+</div>
+
+<!-- MODEL 1: SELLER CREATES -->
+<div id="seller" class="content">
+  <div class="verdict recommended">
+    <div class="verdict-icon">✅</div>
+    <div>
+      <div class="verdict-title">Recommended for SafeSend</div>
+      <div class="verdict-text">Used by Escrow.com, Depop, and most peer-to-peer marketplaces. The seller knows the item — they should define the terms. The buyer just reviews and pays. Clean, unambiguous, legally clear.</div>
+    </div>
+  </div>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-num seller">1</div>
+      <div class="step-body">
+        <div class="step-who seller">Seller</div>
+        <div class="step-title">Creates the deal</div>
+        <div class="step-desc">Fills in item title, description, price, their email, and the buyer's email. Agrees to terms. Submits.</div>
+        <div class="step-detail">
+          Form fields: <code>title</code>, <code>description</code>, <code>amountNzd</code>, <code>sellerEmail</code>, <code>buyerEmail</code><br>
+          State after: <code>pending_buyer_payment</code><br>
+          Advantage: seller controls the item description — no disputes about "that's not what I agreed to sell"
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num system">2</div>
+      <div class="step-body">
+        <div class="step-who system">System</div>
+        <div class="step-title">Emails the buyer</div>
+        <div class="step-desc">Buyer receives an email with the deal details and a payment link. No account needed to pay.</div>
+        <div class="email-preview">
+          <div class="email-header"><strong>From:</strong> SafeSend &lt;noreply@safesend.nz&gt; &nbsp;|&nbsp; <strong>To:</strong> buyer@example.com<br><strong>Subject:</strong> Alex wants to sell you a Gibson Les Paul — review and pay to secure it</div>
+          <div class="email-body">
+            Hi there,<br><br>
+            <strong>Alex Smith</strong> has set up a SafeSend escrow deal for you:
+            <div class="email-amount">$850.00 NZD</div>
+            <strong>Gibson Les Paul 2019 Standard</strong><br>
+            <em>Excellent condition, original case, no marks. Pick up or courier NZ-wide.</em><br><br>
+            Your payment is held securely in escrow. Funds are only released to the seller once you confirm the item arrives as described.<br><br>
+            <a class="email-btn" href="#">Review Deal &amp; Pay →</a><br>
+            <span style="font-size:11px;color:#94a3b8">Link expires in 7 days. You'll sign in with your email — no password needed.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num buyer">3</div>
+      <div class="step-body">
+        <div class="step-who buyer">Buyer</div>
+        <div class="step-title">Reviews terms and pays</div>
+        <div class="step-desc">Clicks the link, signs in via magic link, reviews the deal description and total, pays via Stripe. One screen.</div>
+        <div class="step-detail">
+          Buyer sees: item details, SafeSend fee breakdown, total charged<br>
+          Buyer agrees: terms checkbox on payment screen<br>
+          State after payment: <code>funded</code>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num system">4</div>
+      <div class="step-body">
+        <div class="step-who system">System</div>
+        <div class="step-title">Emails seller: "Payment received — ship now"</div>
+        <div class="step-desc">Seller is notified immediately that funds are secured and they should ship.</div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num seller">5</div>
+      <div class="step-body">
+        <div class="step-who seller">Seller</div>
+        <div class="step-title">Ships and enters tracking</div>
+        <div class="step-desc">Ships the item, enters tracking number and courier in SafeSend. Buyer receives shipping notification.</div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num buyer">6</div>
+      <div class="step-body">
+        <div class="step-who buyer">Buyer</div>
+        <div class="step-title">Receives item, releases funds</div>
+        <div class="step-desc">Confirms receipt. Funds transfer to seller. Or waits 48h for auto-release. Or raises a dispute if there's a problem.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="pros-cons">
+    <div class="pros">
+      <h4>✓ Pros</h4>
+      <ul>
+        <li>Seller controls item description — legally clearest</li>
+        <li>Buyer only has to review and pay — minimal friction</li>
+        <li>Both parties have clear roles from the start</li>
+        <li>Standard in the industry (Escrow.com, Depop)</li>
+        <li>Dispute resolution is simpler — seller defined the terms</li>
+      </ul>
+    </div>
+    <div class="cons">
+      <h4>✗ Cons</h4>
+      <ul>
+        <li>Seller needs to know buyer's email upfront</li>
+        <li>Seller must take the initiative — can't wait for buyer to "start" it</li>
+        <li>Slight friction if deal terms are still being negotiated off-platform</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- MODEL 2: BUYER CREATES -->
+<div id="buyer" class="content hidden">
+  <div class="verdict neutral">
+    <div class="verdict-icon">⚠️</div>
+    <div>
+      <div class="verdict-title">Works, but creates problems</div>
+      <div class="verdict-text">Your instinct — buyer creates, seller fills in details. Used by some payment-request tools (PayPal invoice style). Creates disputes about item description and requires a back-and-forth confirmation step that adds friction.</div>
+    </div>
+  </div>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-num buyer">1</div>
+      <div class="step-body">
+        <div class="step-who buyer">Buyer</div>
+        <div class="step-title">Creates a draft deal</div>
+        <div class="step-desc">Enters what they think they're buying, the price they agreed on, seller's email.</div>
+        <div class="step-detail">
+          Problem: buyer is describing an item they don't own. Description accuracy depends entirely on how well buyer remembers the conversation. Any mismatch becomes a dispute.
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num system">2</div>
+      <div class="step-body">
+        <div class="step-who system">System</div>
+        <div class="step-title">Emails seller to review and confirm</div>
+        <div class="step-desc">Seller must log in and verify the buyer's description is accurate before accepting.</div>
+        <div class="email-preview">
+          <div class="email-header"><strong>Subject:</strong> Sam wants to buy your item — please review the deal details</div>
+          <div class="email-body">
+            Sam Jones wants to buy from you using SafeSend escrow.<br><br>
+            <strong>They've described the deal as:</strong><br>
+            "Gibson guitar - good condition, $800"<br><br>
+            <strong>⚠ Please review these details carefully.</strong> If anything is incorrect — price, description, or condition — you must edit before accepting.<br><br>
+            <a class="email-btn" href="#">Review &amp; Accept →</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num seller">3</div>
+      <div class="step-body">
+        <div class="step-who seller">Seller</div>
+        <div class="step-title">Reviews, possibly edits, accepts</div>
+        <div class="step-desc">Seller can accept as-is or edit the description. If they edit, buyer must re-confirm. This can go back and forth.</div>
+        <div class="step-detail">
+          Requires: either a fixed "seller accepts as-is" rule, or a full back-and-forth editing flow<br>
+          Most implementations force seller to accept buyer's version unchanged, which sellers dislike
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num buyer">4</div>
+      <div class="step-body">
+        <div class="step-who buyer">Buyer</div>
+        <div class="step-title">Pays once seller confirms</div>
+        <div class="step-desc">Now that both parties agree, buyer pays. But this is step 4, not step 2. Extra latency, extra drop-off.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="pros-cons">
+    <div class="pros">
+      <h4>✓ Pros</h4>
+      <ul>
+        <li>Buyer takes initiative — good if seller is less tech-savvy</li>
+        <li>Buyer sees the fee before seller is involved</li>
+        <li>Works for "I want to buy X from you" scenarios</li>
+      </ul>
+    </div>
+    <div class="cons">
+      <h4>✗ Cons</h4>
+      <ul>
+        <li>Buyer describes item they don't own — accuracy issues</li>
+        <li>Extra round-trip before payment (seller confirm step)</li>
+        <li>Higher drop-off — seller may not respond to review request</li>
+        <li>Dispute risk: "I never agreed to those terms"</li>
+        <li>Requires more complex UI for edit-and-re-confirm flow</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- MODEL 3: JOINT LINK -->
+<div id="joint" class="content hidden">
+  <div class="verdict neutral">
+    <div class="verdict-icon">🔗</div>
+    <div>
+      <div class="verdict-title">Best for negotiated deals — consider adding later</div>
+      <div class="verdict-text">Either party creates a partial deal with a shareable link. The other party completes it. Used by PayPal.me and payment request tools. Good for when terms are still being negotiated. More complex to implement correctly.</div>
+    </div>
+  </div>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-num both">1</div>
+      <div class="step-body">
+        <div class="step-who both">Either Party</div>
+        <div class="step-title">Creates a partial deal with a shareable link</div>
+        <div class="step-desc">Either buyer or seller fills in what they know, leaves blanks for the other party. Copies a link and sends it via WhatsApp, Facebook Marketplace chat, or email.</div>
+        <div class="step-detail">
+          SafeSend already has a version of this in the current "Copy Prefilled Link" button on the new deal form — but it's implemented insecurely via URL query params that anyone can manipulate. A proper implementation uses a short-lived deal token stored server-side.
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num both">2</div>
+      <div class="step-body">
+        <div class="step-who both">Other Party</div>
+        <div class="step-title">Opens link, fills in their part, both confirm</div>
+        <div class="step-desc">The link opens a form pre-filled with what the first party entered. The second party fills in the remaining fields. Both must explicitly confirm before the deal is finalised.</div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num system">3</div>
+      <div class="step-body">
+        <div class="step-who system">System</div>
+        <div class="step-title">Both parties sign off — deal created</div>
+        <div class="step-desc">Once both have confirmed the terms, buyer pays. No ambiguity about what was agreed.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="pros-cons">
+    <div class="pros">
+      <h4>✓ Pros</h4>
+      <ul>
+        <li>Works for either party to initiate</li>
+        <li>Good for deals where terms are still being negotiated</li>
+        <li>Both parties explicitly agree — cleanest legal position</li>
+        <li>Familiar from PayPal.me, Monzo payment links</li>
+      </ul>
+    </div>
+    <div class="cons">
+      <h4>✗ Cons</h4>
+      <ul>
+        <li>Most complex to implement correctly</li>
+        <li>Two-step confirmation adds latency</li>
+        <li>Current "prefilled link" is insecure — URL params are forgeable</li>
+        <li>Higher drop-off at the second-party completion step</li>
+        <li>Needs server-side deal token, not URL query params</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- COMPARISON -->
+<div id="compare" class="content hidden">
+  <div class="comparison">
+    <table>
+      <tr>
+        <th style="width:28%">Factor</th>
+        <th style="width:24%">Model 1: Seller Creates ★</th>
+        <th style="width:24%">Model 2: Buyer Creates</th>
+        <th style="width:24%">Model 3: Joint Link</th>
+      </tr>
+      <tr>
+        <td><strong>Who fills in item details</strong></td>
+        <td>Seller (knows the item) <span class="tag green">Best</span></td>
+        <td>Buyer (guessing) <span class="tag red">Risky</span></td>
+        <td>Split between parties <span class="tag yellow">OK</span></td>
+      </tr>
+      <tr>
+        <td><strong>Steps to payment</strong></td>
+        <td>2 steps <span class="tag green">Fastest</span></td>
+        <td>4 steps <span class="tag red">Slowest</span></td>
+        <td>3 steps <span class="tag yellow">Middle</span></td>
+      </tr>
+      <tr>
+        <td><strong>Drop-off risk</strong></td>
+        <td>Low — buyer just pays <span class="tag green">Low</span></td>
+        <td>High — seller must respond <span class="tag red">High</span></td>
+        <td>Medium — second party must complete <span class="tag yellow">Medium</span></td>
+      </tr>
+      <tr>
+        <td><strong>Dispute risk from description mismatch</strong></td>
+        <td>Low — seller defined terms <span class="tag green">Low</span></td>
+        <td>High — buyer wrote about item they don't own <span class="tag red">High</span></td>
+        <td>Low — both confirmed <span class="tag green">Low</span></td>
+      </tr>
+      <tr>
+        <td><strong>Legal clarity</strong></td>
+        <td>Clear — seller accepted by creating <span class="tag green">Clear</span></td>
+        <td>Fuzzy — seller "accepted" buyer's description <span class="tag red">Fuzzy</span></td>
+        <td>Clear — both explicitly agreed <span class="tag green">Clear</span></td>
+      </tr>
+      <tr>
+        <td><strong>Implementation complexity</strong></td>
+        <td>Simple <span class="tag green">Low</span></td>
+        <td>Medium — needs seller-accept step <span class="tag yellow">Medium</span></td>
+        <td>Complex — needs server-side draft tokens <span class="tag red">High</span></td>
+      </tr>
+      <tr>
+        <td><strong>Industry examples</strong></td>
+        <td>Escrow.com, Depop, Vinted, Trade Me</td>
+        <td>PayPal invoice, some invoice tools</td>
+        <td>PayPal.me, Monzo payment links</td>
+      </tr>
+      <tr>
+        <td><strong>Recommendation for SafeSend v1</strong></td>
+        <td><span class="tag green">Build this now</span></td>
+        <td><span class="tag red">Avoid</span></td>
+        <td><span class="tag yellow">Add later as optional flow</span></td>
+      </tr>
+    </table>
+  </div>
+
+  <div style="margin-top:24px; padding:20px; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px;">
+    <p style="font-weight:700; color:#15803d; margin-bottom:8px;">Recommended approach for SafeSend right now</p>
+    <p style="font-size:14px; color:#166534; line-height:1.6;">
+      Ship <strong>Model 1 (Seller Creates)</strong> as the primary flow. It's the simplest to build, has the lowest dispute risk, and matches what users expect from Trade Me and Depop. Add the "Copy Prefilled Link" feature as a convenience — but implement it properly with a server-side draft token rather than URL query params. Model 3 (Joint Link) is a good v2 feature once you have real users and understand their workflow better.
+    </p>
+  </div>
+</div>
+
+<script>
+  function show(tab) {
+    ['seller','buyer','joint','compare'].forEach(id => {
+      document.getElementById(id).classList.add('hidden');
+    });
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.getElementById(tab).classList.remove('hidden');
+    event.target.classList.add('active');
+  }
+</script>
+</body>
+</html>

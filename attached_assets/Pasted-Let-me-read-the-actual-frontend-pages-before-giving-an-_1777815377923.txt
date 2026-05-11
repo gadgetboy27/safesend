@@ -1,0 +1,145 @@
+Let me read the actual frontend pages before giving an opinion.Now I have the full picture. Here's an honest assessment:
+
+---
+
+## Overall: Functional, but Missing Critical Trust Moments
+
+The forms are clean and technically work. But escrow is a trust product — people are handing over real money to a stranger. The UI needs to work harder at the moments where trust matters most, and right now it doesn't.
+
+---
+
+## What Works Well
+
+**The fee calculator on the new deal form** is exactly right. Showing the breakdown live as you type — item price, 4% fee, total — is what every user will want to see before committing. It's done correctly.
+
+**The payment modal** using Stripe's `PaymentElement` is the correct implementation. Stripe's own hosted element handles card input, Apple Pay, Google Pay, and 3D Secure automatically. The `redirect: "if_required"` flag means the payment completes inline for most cards without a redirect. This is good.
+
+**The timeline component** gives both parties a clear visual of where they are in the deal. Simple, well-executed.
+
+**The shareable prefill link** — seller fills in the deal details, copies a link, sends it to the buyer who opens it with everything pre-populated — is genuinely clever for a marketplace context where negotiation happens off-platform.
+
+---
+
+## What's Missing or Broken
+
+**The biggest gap: no deal acceptance step.**
+
+Right now, either party creates a deal naming the other person without their consent or knowledge. There's no "the seller has agreed to these terms" step. A deal is created and immediately moves to the funded state when the buyer pays. The seller has never explicitly agreed to:
+- The described item condition
+- The price
+- The shipping timeline
+- SafeSend's terms
+
+This matters legally and practically. If a dispute arises, you have no record that both parties accepted the deal terms. Industry standard (Escrow.com, Vinted, Depop) always requires both parties to explicitly confirm before payment is accepted.
+
+**The fix:** after deal creation, the seller should receive an email with a "Review and Accept" link. The deal sits in a `pending_acceptance` state. Payment is only enabled once the seller clicks accept. This also solves the notification gap — the seller currently has no idea a deal was created naming them.
+
+---
+
+**The email-based role system is fragile and confusing.**
+
+On the deal detail page, the user types their email to prove who they are. This is the current flow:
+
+```
+Anyone with the deal URL → types any email → 
+if it matches buyer or seller → gets that role's buttons
+```
+
+There is no real identity check here. If I know your deal ID and your email (both are in the URL you shared with me), I can impersonate your role. The audit already flagged this but the UX problem compounds it — users shouldn't have to type their email to access a deal. Once they're logged in via magic link, their identity is already known. The role should be derived from the session, not a text box.
+
+---
+
+**The ShipModal toast says "Buyer has been notified" — but there's no notification code.**
+
+```ts
+toast({ title: "Marked Shipped", description: "Buyer has been notified." });
+```
+
+No email is sent. The buyer only finds out the item shipped if they happen to check the deal page. For a physical goods transaction this is a significant gap — the buyer needs to know when to expect the package and when to start the delivery window.
+
+The same problem exists at every state transition. Funded → no email to seller. Shipped → no email to buyer. Delivered → no email to buyer prompting release. Dispute raised → no email to admin.
+
+---
+
+**The timeline breaks silently for disputed, cancelled, and refunded deals.**
+
+```ts
+if (state === DealState.disputed || state === DealState.cancelled || state === DealState.refunded) {
+  currentIndex = -1; // hide or show differently
+}
+```
+
+`currentIndex = -1` means none of the timeline steps show as active. The user sees a blank timeline with no indication of what state they're in. For a disputed deal — exactly the moment when a user is stressed and needs clarity — the UI gives them nothing. These three states need their own visual treatment, not just a silent fallback.
+
+---
+
+**The dispute form is too bare.**
+
+One textarea for a reason. No ability to attach photos or evidence. No guidance on what makes a good dispute reason. No indication of what happens next or how long resolution takes.
+
+For anything involving real money, "please describe your dispute" with a 10-character minimum is not enough. At minimum you need:
+- What specifically went wrong (select: item not received / item not as described / other)
+- Evidence upload (photo of the item condition, screenshot of messages)
+- Acknowledgement that funds are frozen during review
+
+---
+
+**The deal list requires typing your email every time.**
+
+```tsx
+<Input type="email" placeholder="Enter your email..." />
+```
+
+Once a user is authenticated via magic link they have a session. The deals list should use `GET /auth/me` to get the current user's email and load their deals automatically. Making them type their email on every visit is friction that will frustrate returning users and will confuse new ones who don't understand the connection between their email and their deals.
+
+---
+
+**No "what happens next" guidance at each state.**
+
+At every stage a user might not know what they're supposed to do. The funded state shows the seller a "Mark as Shipped" button but gives no guidance: within what timeframe should they ship? What if they can't? The delivered state shows the buyer "Release Funds" but doesn't explain the 48-hour auto-release — so they might sit there unsure if they need to click or if it happens automatically.
+
+Each state card should have one sentence of plain-English explanation:
+
+> **Funded** — "Payment received. Ship the item and enter your tracking number to proceed."  
+> **Delivered** — "The courier has confirmed delivery. Click to release funds, or raise a dispute if there's a problem. Funds auto-release in 48 hours if no action is taken."
+
+---
+
+## The Stripe Integration Specifically
+
+The implementation is technically correct — `PaymentElement` inside `Elements` with a `clientSecret`, `confirmPayment` with `redirect: "if_required"`. That's the right pattern.
+
+Three things to add:
+
+**1. A payment success state on the deal page.** Currently after payment succeeds the modal closes and the page re-fetches. But the Stripe webhook is what actually transitions the deal to `funded` — and that can take a few seconds. The buyer will see the deal still in `created` state briefly after paying, which is confusing. Show a "Payment processing..." banner that polls until the state changes to `funded`.
+
+**2. Handle the `?payment=success` return URL.** The `confirmPayment` call sets `return_url: .../deals/${dealId}?payment=success` for 3D Secure redirects. When a user lands back on the deal page with `?payment=success` in the URL, the page should show a success message automatically. Currently nothing handles this URL param.
+
+**3. The seller onboarding (Stripe Connect) is completely disconnected from the deal flow.** A seller can receive a funded deal and have no Stripe account set up. When the buyer releases funds, `releaseDealFunds()` silently skips the transfer with a warning log and marks the deal complete anyway:
+
+```ts
+} else {
+  logger.warn({ dealId }, "No verified seller Stripe account — skipping transfer");
+}
+```
+
+The seller gets nothing. This needs to be surfaced in the UI — when a seller enters the deal page and the deal is funded, they should see a prominent banner: "Set up your payment account to receive funds when this deal completes" with a link to `/seller/onboard`.
+
+---
+
+## Summary
+
+| Area | Status |
+|---|---|
+| New deal form | ✅ Clean, fee calculator works, shareable link is smart |
+| Payment modal (Stripe) | ✅ Correct implementation, needs success state handling |
+| Deal timeline | ⚠️ Breaks for disputed/cancelled/refunded states |
+| Role identity system | 🔴 Email in a text box is not real auth |
+| Deal acceptance by counterparty | 🔴 Missing entirely |
+| Email notifications at each state | 🔴 Missing entirely — toasts lie about notifying |
+| Dispute form | ⚠️ Needs evidence upload and guidance |
+| Seller Stripe Connect visibility | 🔴 Funds silently disappear if seller not onboarded |
+| Deal list UX | ⚠️ Should use session, not manual email entry |
+| Contextual guidance per state | ⚠️ Missing — users don't know what to do or wait for |
+
+The payment plumbing is sound. The UX around trust, communication, and state clarity needs a focused pass before real users touch it.

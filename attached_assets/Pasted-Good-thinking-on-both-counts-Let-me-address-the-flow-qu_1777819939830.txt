@@ -1,0 +1,44 @@
+Good thinking on both counts. Let me address the flow question first, then the demo idea.
+
+The Acceptance Flow — What Should Actually Happen
+You're right that the buyer needs to approve before escrow is set up. But there's a subtle and important distinction about when Stripe gets involved:
+Seller creates deal
+       ↓
+System emails buyer a "Review this deal" link
+       ↓
+Buyer opens the deal, reads the terms
+       ↓                    ↓
+Buyer clicks Accept    Buyer clicks Decline
+       ↓                    ↓
+ESCROW CREATED         Deal cancelled
+Stripe PaymentIntent        Seller notified
+created NOW
+       ↓
+Buyer enters card details
+       ↓
+Funds held in escrow
+       ↓
+Seller ships...
+The key point — the Stripe escrow is created at the moment the buyer accepts and pays, not before. You don't want to create a PaymentIntent when the deal is just sitting waiting for buyer approval. That would mean creating and abandoning Stripe objects for every deal a buyer declines. The current code already does this correctly — confirm-payment creates the PaymentIntent — it just needs the acceptance gate added before that step.
+So the full state machine becomes:
+pending_acceptance → accepted → funded → shipped → delivered → complete
+                  ↘ declined (deal dead)
+The buyer clicking "Accept & Pay" does two things atomically — accepts the deal terms AND initiates the Stripe payment in the same action. One button, one screen.
+
+The Demo Idea — Yes, But Make It Non-Functional
+Keeping the form as a public-facing explainer is smart marketing. But there's an important distinction between two versions:
+Option A — Fully interactive demo (no real data)
+The form works exactly like the real one — fee calculator updates live, you can fill everything in, click Create Deal — but it hits a /demo endpoint that doesn't write to the database, doesn't send emails, and returns a fake deal ID. Shows a "This is a demo — sign up to create a real deal" screen at the end.
+Option B — Static visual walkthrough
+The form is shown in a series of screenshots or an animated preview showing the three steps. No actual interaction. Simpler to build, no risk of abuse.
+Option A is better. People trust what they've touched. Letting someone fill in "Gibson Les Paul, $850" and see the fee calculator work, then see the fake deal summary, is far more convincing than a screenshot. Escrow.com does exactly this — their "how it works" page has a live fee calculator that anyone can use without an account.
+The one thing to be careful about — the current form sends real emails on submission. The demo version must not do that. A /api/deals/preview endpoint that just returns the fee calculation and a simulated deal object, with no DB write and no email, is the right approach.
+
+Let me build that interactive demo widget right now so you can see what it would look like embedded on a marketing page:Created a file, read a fileCreated a file, read a fileTry it — fill in an item, price, and two emails, hit Create Deal and watch what happens.
+
+To answer your flow question directly: yes, you've got it right — the buyer accepts the deal and that acceptance IS the trigger for escrow setup. The two actions are combined into one button: "Review Deal & Pay". When the buyer clicks that, they're simultaneously agreeing to the terms AND initiating the Stripe payment. That's the cleanest UX — one decision, one action, money moves into escrow.
+What you don't want is a two-step where the buyer clicks "Accept" (deal accepted, no money moves yet), then separately clicks "Pay" on a different screen. That creates a limbo state where the deal is accepted but unfunded, the seller thinks it's locked in, but the buyer hasn't actually committed anything. Keep it as one screen: review terms → enter card → pay → escrow created.
+On the demo widget — three things to note when you embed this in your real site:
+The form validation is real. It actually catches bad emails, amounts outside the $1–$2,500 range, and same buyer/seller email. The fee calculator matches the production logic exactly (4%, minimum $5). So visitors get an accurate picture of what they'd pay.
+The email preview is the money shot. When someone fills in a real item they're thinking of selling, sees their own email in the "From" field, and reads the email the buyer would receive — that's the moment it becomes real to them. That preview is more persuasive than any marketing copy.
+Add a clear "This is a demo" banner — which it has — and a "Sign up to create real deals" link that goes to your actual registration. That's the conversion path. Someone plays with the demo, sees it's exactly what they need for their Trade Me situation, clicks sign up.

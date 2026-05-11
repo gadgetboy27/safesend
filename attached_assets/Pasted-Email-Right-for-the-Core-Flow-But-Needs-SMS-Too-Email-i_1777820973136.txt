@@ -1,0 +1,46 @@
+Email — Right for the Core Flow, But Needs SMS Too
+Email is the correct primary channel for transactional confirmations — deal created, payment received, item shipped, funds released. These are records people want in their inbox. They forward them, refer back to them in disputes, and use them as proof of transaction.
+But email is the wrong channel for time-sensitive alerts. The problem with a physical goods escrow is that timing matters:
+
+Seller needs to know immediately when funds clear so they can ship promptly
+Buyer needs to know immediately when something is delivered so they can release funds (or dispute) before the 48-hour auto-release fires
+If a dispute is raised, both parties need to know within minutes, not whenever they next check email
+
+Most people check email a few times a day. They check their phone constantly. For a deal worth $500–$2,500, a notification that sits unread for 6 hours is a real problem.
+The industry answer is both — email for records, SMS for urgency:
+EventEmailSMSDeal created✅ Full details✅ "Review & pay your SafeSend deal"Payment funded✅ Full details✅ "Payment received — ship now"Item shipped✅ Tracking details✅ "Your item is on the way"Delivered✅ Full details✅ "Confirm receipt or auto-releases in 48h"Dispute raised✅ Full details✅ "Action needed — dispute raised"Funds released✅ ReceiptOptional
+SMS in NZ costs roughly $0.06–$0.10 per message via Twilio or MessageBird. On a $850 deal with a $39 fee, spending $0.60 on 6 SMS notifications is a rounding error. Escrow.com, Depop, and Vinted all use both channels.
+The implementation is straightforward — Twilio has a Node.js SDK, same pattern as Resend. You'd add a phone field to the user/deal record and call sendSms() alongside sendEmail() at each transition.
+
+Phone Numbers Between Parties — Be Very Careful Here
+This is where you need to think hard, because the answer isn't just a technical one.
+The instinct to let buyers and sellers contact each other directly is correct. They need to coordinate shipping windows, discuss condition questions, sort out pick-up details. But sharing raw phone numbers creates three real problems for SafeSend:
+1. It moves the deal off your platform. Once buyer and seller can talk directly, they can agree to skip SafeSend entirely and do the deal cash or bank transfer. You lose the fee. More importantly, you lose visibility into the deal status — if they resolve a dispute verbally, you don't know. This is called "disintermediation" and it's the thing every marketplace fears most. Trade Me has this problem with sellers saying "text me" in their listings.
+2. It creates harassment liability. If a deal goes bad and one party starts harassing the other via the phone number SafeSend provided, you have some exposure there. You facilitated the contact.
+3. It's an unnecessary data risk. Storing phone numbers for parties who never explicitly agreed to share them with each other is a privacy concern under the NZ Privacy Act.
+
+The Better Approach — In-App Messaging
+The industry standard solution is in-app messaging rather than phone number exchange. Every serious marketplace does this: Trade Me, Depop, Vinted, Facebook Marketplace, AirBnB.
+The buyer and seller message each other through SafeSend's interface. You see the messages, they create an audit trail for disputes, and neither party's contact details are exposed until they choose to share them.
+For SafeSend specifically this is actually simpler than it sounds because the deal already has both emails. A basic messaging thread could be:
+POST /api/deals/:dealId/messages    — send a message
+GET  /api/deals/:dealId/messages    — fetch thread
+
+DB table: deal_messages
+  id, deal_id, sender_email, content, created_at
+Each new message triggers an email notification to the other party with a "Reply in SafeSend" link. They click it, sign in via magic link, see the thread, reply. No phone numbers needed.
+For v1 this is actually fine — you don't need real-time chat. The deals are short enough (days, not weeks) that a simple email-notified thread works. Real-time WebSocket chat is a v2 feature.
+
+What to Actually Build
+Here's the practical recommendation in priority order:
+Now: Add a phone number field to the deal creation form — optional, not required. Used only for SMS notifications to that person, not shared with the other party. Store it on the deal record, not on a user profile, since many users won't have accounts.
+Now: Add Twilio SMS for the 4 most time-sensitive events: funded, delivered, dispute raised, dispute resolved. Skip SMS for created and complete — those aren't urgent.
+v2: Add in-app deal messaging thread so parties can coordinate without exchanging contact details. Email notification on each new message.
+Never: Auto-share one party's phone number with the other. Let them choose to share it themselves in the message thread if they want to.
+
+Let me build the updated deal form with the optional phone field and show how the notification decision tree would look:Created a file, read a fileCreated a file, read a fileTwo files — click through all four tabs in the notifications one. Here's the summary of everything covered:
+
+On email: Yes, it's the right channel for records and confirmations. But four events are too time-sensitive for email alone — funded, delivered, dispute raised, and the deal creation notification to the buyer. For those, SMS is essential. The cost is $0.08 per message via Twilio NZ. On a $39 fee deal you're spending about 50 cents on SMS. It's a rounding error.
+On phone numbers between parties: Don't do it. The moment buyer and seller can call each other directly, they can agree to bypass SafeSend and do the deal via bank transfer. You lose the fee and lose visibility into the deal. Every major marketplace — Trade Me, Depop, AirBnB — keeps communication on-platform for exactly this reason. Collect phone numbers for your own outbound SMS notifications, but never expose them to the other party.
+The better answer is in-app messaging — a simple message thread per deal where buyer and seller can coordinate. You can try the demo in the messaging tab, type a message and hit send. For v1 this doesn't need to be real-time chat. Just messages stored in a DB table, with an email notification to the other party on each new message. The huge advantage is that those messages become evidence in disputes — if a buyer claims they were never told the item shipped, the thread proves otherwise.
+The implementation tab shows the exact code for all three: Resend email templates, Twilio SMS, and the deal messages DB schema. The whole thing is about 4–5 hours of Replit agent work.

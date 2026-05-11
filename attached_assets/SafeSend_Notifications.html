@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SafeSend — Notification Strategy</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f1f5f9; color: #1e293b; }
+
+.page { max-width: 1060px; margin: 0 auto; padding: 32px 20px 60px; }
+h1 { font-size: 26px; font-weight: 800; margin-bottom: 6px; }
+.subtitle { color: #64748b; font-size: 15px; margin-bottom: 32px; }
+
+.tabs { display: flex; gap: 0; border-bottom: 2px solid #e2e8f0; margin-bottom: 28px; }
+.tab { padding: 11px 20px; font-size: 14px; font-weight: 600; cursor: pointer; border-bottom: 3px solid transparent; margin-bottom: -2px; color: #64748b; transition: all 0.15s; }
+.tab.active { color: #0f766e; border-bottom-color: #0f766e; }
+.tab:hover:not(.active) { color: #334155; }
+.pane { display: none; }
+.pane.active { display: block; }
+
+/* ── Notification matrix ──────────────────────── */
+.matrix { background: white; border-radius: 14px; box-shadow: 0 2px 12px rgba(0,0,0,0.07); overflow: hidden; }
+.matrix table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.matrix th { background: #f8fafc; padding: 13px 16px; text-align: left; font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; border-bottom: 2px solid #e2e8f0; }
+.matrix th:first-child { width: 30%; }
+.matrix td { padding: 13px 16px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+.matrix tr:last-child td { border-bottom: none; }
+.matrix tr:hover td { background: #fafbfc; }
+.event-name { font-weight: 700; font-size: 13px; margin-bottom: 2px; }
+.event-who { font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+
+.badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 99px; font-size: 11px; font-weight: 700; }
+.badge.email { background: #eff6ff; color: #1d4ed8; }
+.badge.sms { background: #f0fdf4; color: #15803d; }
+.badge.none { background: #f8fafc; color: #94a3b8; }
+.badge.both { background: #fdf4ff; color: #7e22ce; }
+.channel-cell { display: flex; flex-direction: column; gap: 5px; }
+.channel-row { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.channel-label { color: #64748b; min-width: 44px; }
+
+.urgency { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 99px; }
+.urgency.high { background: #fef2f2; color: #b91c1c; }
+.urgency.medium { background: #fef9c3; color: #92400e; }
+.urgency.low { background: #f0fdf4; color: #15803d; }
+
+.note { font-size: 12px; color: #64748b; margin-top: 4px; line-height: 1.4; }
+
+/* ── Implementation guide ─────────────────────── */
+.impl-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+@media (max-width: 640px) { .impl-grid { grid-template-columns: 1fr; } }
+
+.impl-card { background: white; border-radius: 14px; box-shadow: 0 2px 12px rgba(0,0,0,0.07); padding: 22px; }
+.impl-card h3 { font-size: 16px; font-weight: 700; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+.impl-card .impl-sub { font-size: 12px; color: #64748b; margin-bottom: 16px; }
+.code-block { background: #1e293b; color: #e2e8f0; border-radius: 8px; padding: 14px 16px; font-family: 'Menlo', 'Monaco', monospace; font-size: 12px; line-height: 1.65; overflow-x: auto; }
+.code-block .kw { color: #93c5fd; }
+.code-block .str { color: #86efac; }
+.code-block .fn { color: #fde68a; }
+.code-block .cm { color: #64748b; }
+
+.cost-box { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 12px 14px; margin-top: 14px; font-size: 13px; }
+.cost-box strong { color: #15803d; }
+
+/* ── Form with phone ──────────────────────────── */
+.form-card { background: white; border-radius: 14px; box-shadow: 0 2px 12px rgba(0,0,0,0.07); padding: 24px; max-width: 560px; }
+.form-card h3 { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+.form-card .form-sub { font-size: 13px; color: #64748b; margin-bottom: 20px; }
+
+.field { margin-bottom: 16px; }
+label { display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 5px; }
+.label-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 5px; }
+.optional { font-size: 11px; color: #94a3b8; font-weight: 400; }
+input, textarea, select { width: 100%; padding: 10px 12px; border: 1.5px solid #e2e8f0; border-radius: 8px; font-size: 14px; color: #1e293b; font-family: inherit; outline: none; transition: border-color 0.15s, box-shadow 0.15s; }
+input:focus, textarea:focus, select:focus { border-color: #0d9488; box-shadow: 0 0 0 3px rgba(13,148,136,0.1); }
+textarea { min-height: 72px; resize: vertical; }
+.field-hint { font-size: 11px; color: #94a3b8; margin-top: 4px; }
+
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+.phone-row { display: flex; gap: 8px; }
+.phone-prefix { padding: 10px 12px; border: 1.5px solid #e2e8f0; border-radius: 8px; background: #f8fafc; font-size: 14px; color: #374151; font-weight: 600; width: 72px; flex-shrink: 0; text-align: center; }
+
+.divider { border: none; border-top: 1px solid #f1f5f9; margin: 20px 0; }
+
+.section-label { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.07em; color: #94a3b8; margin-bottom: 14px; }
+
+.notify-prefs { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px 16px; }
+.pref-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid #f1f5f9; }
+.pref-row:last-child { border-bottom: none; }
+.pref-check { width: 16px; height: 16px; accent-color: #0f766e; flex-shrink: 0; }
+.pref-label { font-size: 13px; color: #374151; flex: 1; }
+.pref-channels { display: flex; gap: 4px; }
+.pref-ch { font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 99px; }
+.pref-ch.e { background: #eff6ff; color: #1d4ed8; }
+.pref-ch.s { background: #f0fdf4; color: #15803d; }
+
+.fee-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px 16px; }
+.fee-row { display: flex; justify-content: space-between; font-size: 13px; color: #64748b; padding: 3px 0; }
+.fee-row.total { border-top: 1px solid #e2e8f0; margin-top: 8px; padding-top: 10px; font-weight: 700; font-size: 15px; color: #1e293b; }
+.fee-row.total span:last-child { color: #0f766e; }
+
+.btn { width: 100%; padding: 13px; background: #0f766e; color: white; border: none; border-radius: 10px; font-size: 15px; font-weight: 700; cursor: pointer; margin-top: 20px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+.btn:hover { background: #0d6560; }
+
+.privacy-note { font-size: 11px; color: #94a3b8; text-align: center; margin-top: 12px; line-height: 1.5; }
+
+/* ── Messaging thread ─────────────────────────── */
+.thread-card { background: white; border-radius: 14px; box-shadow: 0 2px 12px rgba(0,0,0,0.07); overflow: hidden; max-width: 560px; }
+.thread-header { background: #f8fafc; padding: 16px 20px; border-bottom: 1px solid #e2e8f0; display: flex; align-items: center; gap: 10px; }
+.thread-deal { flex: 1; }
+.thread-deal-title { font-weight: 700; font-size: 14px; }
+.thread-deal-sub { font-size: 12px; color: #64748b; }
+.thread-status { font-size: 11px; font-weight: 700; padding: 3px 8px; background: #ccfbf1; color: #0f766e; border-radius: 99px; }
+
+.messages { padding: 16px; display: flex; flex-direction: column; gap: 12px; min-height: 240px; }
+.msg { max-width: 75%; }
+.msg.buyer { align-self: flex-start; }
+.msg.seller { align-self: flex-end; }
+.msg-who { font-size: 10px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 3px; }
+.msg.seller .msg-who { text-align: right; }
+.msg-bubble { padding: 10px 13px; border-radius: 12px; font-size: 13px; line-height: 1.5; }
+.msg.buyer .msg-bubble { background: #f1f5f9; color: #1e293b; border-radius: 4px 12px 12px 12px; }
+.msg.seller .msg-bubble { background: #0f766e; color: white; border-radius: 12px 4px 12px 12px; }
+.msg-time { font-size: 10px; color: #cbd5e1; margin-top: 3px; }
+.msg.seller .msg-time { text-align: right; }
+
+.system-msg { text-align: center; font-size: 11px; color: #94a3b8; padding: 4px 0; font-style: italic; }
+
+.thread-input { padding: 14px 16px; border-top: 1px solid #e2e8f0; display: flex; gap: 8px; }
+.thread-input input { flex: 1; padding: 9px 12px; border: 1.5px solid #e2e8f0; border-radius: 20px; font-size: 13px; outline: none; font-family: inherit; }
+.thread-input input:focus { border-color: #0d9488; }
+.thread-send { padding: 9px 16px; background: #0f766e; color: white; border: none; border-radius: 20px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.thread-send:hover { background: #0d6560; }
+
+.privacy-banner { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 10px 14px; font-size: 12px; color: #1d4ed8; margin: 0 16px 12px; display: flex; align-items: flex-start; gap: 6px; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <h1>Notifications & Communication</h1>
+  <p class="subtitle">How SafeSend keeps buyers and sellers informed at every stage</p>
+
+  <div class="tabs">
+    <div class="tab active" onclick="show('matrix')">Notification Strategy</div>
+    <div class="tab" onclick="show('form')">Updated Deal Form</div>
+    <div class="tab" onclick="show('messaging')">In-App Messaging</div>
+    <div class="tab" onclick="show('impl')">Implementation</div>
+  </div>
+
+  <!-- NOTIFICATION MATRIX -->
+  <div id="matrix" class="pane active">
+    <div class="matrix">
+      <table>
+        <tr>
+          <th>Event</th>
+          <th>Who gets notified</th>
+          <th>Email</th>
+          <th>SMS</th>
+          <th>Urgency</th>
+        </tr>
+
+        <tr>
+          <td>
+            <div class="event-name">Deal created</div>
+            <div class="event-who">by seller</div>
+            <div class="note">Buyer needs to know they've been named in a deal and needs to pay</div>
+          </td>
+          <td>Buyer</td>
+          <td><div class="channel-cell"><div class="channel-row"><span class="badge email">✉ Email</span></div><div style="font-size:11px;color:#64748b;">Full deal details + payment link</div></div></td>
+          <td><div class="channel-cell"><div class="channel-row"><span class="badge sms">💬 SMS</span></div><div style="font-size:11px;color:#64748b;">"Review & pay your SafeSend deal"</div></div></td>
+          <td><span class="urgency medium">Medium</span></td>
+        </tr>
+
+        <tr>
+          <td>
+            <div class="event-name">Payment funded</div>
+            <div class="event-who">by buyer</div>
+            <div class="note">Seller must act quickly — ship the item</div>
+          </td>
+          <td>Seller</td>
+          <td><div class="channel-cell"><div class="channel-row"><span class="badge email">✉ Email</span></div><div style="font-size:11px;color:#64748b;">Payment confirmation + ship instructions</div></div></td>
+          <td><div class="channel-cell"><div class="channel-row"><span class="badge sms">💬 SMS</span></div><div style="font-size:11px;color:#64748b;">"Payment secured — ship now"</div></div></td>
+          <td><span class="urgency high">High</span></td>
+        </tr>
+
+        <tr>
+          <td>
+            <div class="event-name">Item shipped</div>
+            <div class="event-who">by seller</div>
+            <div class="note">Buyer wants to know when to watch for delivery</div>
+          </td>
+          <td>Buyer</td>
+          <td><div class="channel-cell"><div class="channel-row"><span class="badge email">✉ Email</span></div><div style="font-size:11px;color:#64748b;">Tracking number + courier link</div></div></td>
+          <td><div class="channel-cell"><div class="channel-row"><span class="badge sms">💬 SMS</span></div><div style="font-size:11px;color:#64748b;">"Your item is on the way — track here"</div></div></td>
+          <td><span class="urgency medium">Medium</span></td>
+        </tr>
+
+        <tr>
+          <td>
+            <div class="event-name">Item delivered</div>
+            <div class="event-who">by courier scan</div>
+            <div class="note">Critical — buyer has 48h to act before auto-release fires</div>
+          </td>
+          <td>Buyer</td>
+          <td><div class="channel-cell"><div class="channel-row"><span class="badge email">✉ Email</span></div><div style="font-size:11px;color:#64748b;">Confirm receipt or raise dispute within 48h</div></div></td>
+          <td><div class="channel-cell"><div class="channel-row"><span class="badge sms">💬 SMS</span></div><div style="font-size:11px;color:#64748b;">"Delivered! Confirm or auto-releases in 48h"</div></div></td>
+          <td><span class="urgency high">High</span></td>
+        </tr>
+
+        <tr>
+          <td>
+            <div class="event-name">Dispute raised</div>
+            <div class="event-who">by buyer or seller</div>
+            <div class="note">Both parties and admin need to know immediately</div>
+          </td>
+          <td>Both + Admin</td>
+          <td><div class="channel-cell"><div class="channel-row"><span class="badge email">✉ Email</span></div><div style="font-size:11px;color:#64748b;">Dispute reason + next steps + admin notified</div></div></td>
+          <td><div class="channel-cell"><div class="channel-row"><span class="badge sms">💬 SMS</span></div><div style="font-size:11px;color:#64748b;">"Dispute raised — funds frozen, review now"</div></div></td>
+          <td><span class="urgency high">High</span></td>
+        </tr>
+
+        <tr>
+          <td>
+            <div class="event-name">Funds released</div>
+            <div class="event-who">by buyer or auto-release</div>
+          </td>
+          <td>Seller</td>
+          <td><div class="channel-cell"><div class="channel-row"><span class="badge email">✉ Email</span></div><div style="font-size:11px;color:#64748b;">Transfer confirmation + amount</div></div></td>
+          <td><div class="channel-cell"><div class="channel-row"><span class="badge none">— Skip</span></div><div style="font-size:11px;color:#64748b;">Not time-sensitive</div></div></td>
+          <td><span class="urgency low">Low</span></td>
+        </tr>
+
+        <tr>
+          <td>
+            <div class="event-name">Deal cancelled</div>
+            <div class="event-who">by either party</div>
+          </td>
+          <td>Both</td>
+          <td><div class="channel-cell"><div class="channel-row"><span class="badge email">✉ Email</span></div><div style="font-size:11px;color:#64748b;">Cancellation confirmation + refund status</div></div></td>
+          <td><div class="channel-cell"><div class="channel-row"><span class="badge none">— Skip</span></div><div style="font-size:11px;color:#64748b;">Not time-sensitive</div></div></td>
+          <td><span class="urgency low">Low</span></td>
+        </tr>
+
+        <tr>
+          <td>
+            <div class="event-name">New message</div>
+            <div class="event-who">in deal thread</div>
+          </td>
+          <td>Other party</td>
+          <td><div class="channel-cell"><div class="channel-row"><span class="badge email">✉ Email</span></div><div style="font-size:11px;color:#64748b;">Message preview + "Reply in SafeSend" link</div></div></td>
+          <td><div class="channel-cell"><div class="channel-row"><span class="badge none">— Skip</span></div><div style="font-size:11px;color:#64748b;">Email is sufficient for async chat</div></div></td>
+          <td><span class="urgency low">Low</span></td>
+        </tr>
+      </table>
+    </div>
+
+    <div style="margin-top:20px;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:16px 18px;font-size:13px;color:#7c2d12;line-height:1.6;">
+      <strong>🚫 Never share phone numbers between parties automatically.</strong> If buyer and seller want to exchange numbers, they can do it in the deal message thread. SafeSend's role is to keep communication on-platform where it can be referenced in disputes. Direct phone contact moves the deal off your platform and creates disintermediation risk.
+    </div>
+  </div>
+
+  <!-- UPDATED FORM -->
+  <div id="form" class="pane">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start;">
+
+      <div class="form-card">
+        <h3>Create a Deal</h3>
+        <p class="form-sub">Seller fills this in. Buyer receives a payment link by email and SMS.</p>
+
+        <div class="section-label">Item Details</div>
+
+        <div class="field">
+          <label>Item Title</label>
+          <input type="text" placeholder="e.g. Gibson Les Paul 2019 Standard" />
+        </div>
+
+        <div class="field">
+          <label>Description</label>
+          <textarea placeholder="Condition, what's included, any specific terms…"></textarea>
+        </div>
+
+        <div class="field">
+          <label>Agreed Price (NZD)</label>
+          <div style="position:relative;">
+            <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:#64748b;font-weight:600;">$</span>
+            <input type="number" style="padding-left:24px;" placeholder="0.00" id="demoAmt" oninput="calcFee()" />
+          </div>
+          <div class="field-hint">Maximum $2,500 per deal</div>
+        </div>
+
+        <div class="fee-box" style="margin-bottom:16px;">
+          <div class="fee-row"><span>Item price</span><span id="dAmt">$0.00</span></div>
+          <div class="fee-row"><span>SafeSend fee (4%, min $5)</span><span id="dFee">$5.00</span></div>
+          <div class="fee-row total"><span>Buyer pays</span><span id="dTotal">—</span></div>
+        </div>
+
+        <hr class="divider">
+        <div class="section-label">Seller Details</div>
+
+        <div class="row2">
+          <div class="field">
+            <label>Your Email</label>
+            <input type="email" placeholder="seller@example.com" />
+          </div>
+          <div class="field">
+            <div class="label-row">
+              <label>Your Mobile</label>
+              <span class="optional">optional</span>
+            </div>
+            <div class="phone-row">
+              <div class="phone-prefix">🇳🇿 +64</div>
+              <input type="tel" placeholder="21 123 4567" />
+            </div>
+            <div class="field-hint">SMS alerts only — not shared with buyer</div>
+          </div>
+        </div>
+
+        <hr class="divider">
+        <div class="section-label">Buyer Details</div>
+
+        <div class="row2">
+          <div class="field">
+            <label>Buyer Email</label>
+            <input type="email" placeholder="buyer@example.com" />
+          </div>
+          <div class="field">
+            <div class="label-row">
+              <label>Buyer Mobile</label>
+              <span class="optional">optional</span>
+            </div>
+            <div class="phone-row">
+              <div class="phone-prefix">🇳🇿 +64</div>
+              <input type="tel" placeholder="21 123 4567" />
+            </div>
+            <div class="field-hint">SMS alerts only — not shared with seller</div>
+          </div>
+        </div>
+
+        <hr class="divider">
+        <div class="section-label">Notification Preferences</div>
+
+        <div class="notify-prefs">
+          <div class="pref-row">
+            <input type="checkbox" class="pref-check" checked>
+            <span class="pref-label">Deal created & payment link sent</span>
+            <div class="pref-channels"><span class="pref-ch e">Email</span><span class="pref-ch s">SMS</span></div>
+          </div>
+          <div class="pref-row">
+            <input type="checkbox" class="pref-check" checked>
+            <span class="pref-label">Payment received — ship now</span>
+            <div class="pref-channels"><span class="pref-ch e">Email</span><span class="pref-ch s">SMS</span></div>
+          </div>
+          <div class="pref-row">
+            <input type="checkbox" class="pref-check" checked>
+            <span class="pref-label">Item shipped & delivered alerts</span>
+            <div class="pref-channels"><span class="pref-ch e">Email</span><span class="pref-ch s">SMS</span></div>
+          </div>
+          <div class="pref-row">
+            <input type="checkbox" class="pref-check" checked>
+            <span class="pref-label">Dispute raised</span>
+            <div class="pref-channels"><span class="pref-ch e">Email</span><span class="pref-ch s">SMS</span></div>
+          </div>
+        </div>
+
+        <button class="btn">🔒 Create Deal & Email Buyer</button>
+        <p class="privacy-note">Phone numbers are used for notifications only and are never shared between buyer and seller. <a href="#" style="color:#0f766e;">Privacy policy</a></p>
+      </div>
+
+      <div>
+        <div style="background:white;border-radius:14px;box-shadow:0 2px 12px rgba(0,0,0,0.07);padding:20px;margin-bottom:16px;">
+          <div style="font-weight:700;font-size:14px;margin-bottom:12px;">📱 Why add mobile?</div>
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            <div style="display:flex;gap:10px;font-size:13px;">
+              <span style="font-size:18px;flex-shrink:0;">⚡</span>
+              <div><strong>Time-sensitive alerts arrive instantly.</strong> When a $1,200 item is marked delivered, the buyer needs to know right now — not the next time they check email.</div>
+            </div>
+            <div style="display:flex;gap:10px;font-size:13px;">
+              <span style="font-size:18px;flex-shrink:0;">🔒</span>
+              <div><strong>Numbers are private.</strong> Each party's phone is used only for their own alerts. Neither party sees the other's number.</div>
+            </div>
+            <div style="display:flex;gap:10px;font-size:13px;">
+              <span style="font-size:18px;flex-shrink:0;">💰</span>
+              <div><strong>Cost is negligible.</strong> ~$0.08/SMS via Twilio NZ. A $40 SafeSend fee covers ~500 SMS messages.</div>
+            </div>
+            <div style="display:flex;gap:10px;font-size:13px;">
+              <span style="font-size:18px;flex-shrink:0;">📉</span>
+              <div><strong>Reduces disputes.</strong> The most common dispute trigger is "I didn't know it was delivered." SMS eliminates that excuse.</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:14px;padding:20px;">
+          <div style="font-weight:700;font-size:14px;margin-bottom:10px;color:#7c2d12;">🚫 What NOT to do</div>
+          <div style="font-size:13px;color:#92400e;line-height:1.6;">
+            Don't show buyer's phone to seller or vice versa — even with consent. Once they can call each other directly, they can bypass SafeSend and do the deal without paying the fee. Keep communication in-app and use phone numbers only for outbound notifications from SafeSend itself.
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- IN-APP MESSAGING -->
+  <div id="messaging" class="pane">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start;">
+
+      <div>
+        <div class="thread-card">
+          <div class="thread-header">
+            <div class="thread-deal">
+              <div class="thread-deal-title">Gibson Les Paul 2019 Standard</div>
+              <div class="thread-deal-sub">$850.00 · Deal #SS-A3F9K2</div>
+            </div>
+            <div class="thread-status">Funded</div>
+          </div>
+
+          <div class="messages">
+            <div class="system-msg">Deal created — 2 May 2026</div>
+
+            <div class="msg buyer">
+              <div class="msg-who">Buyer (Mike)</div>
+              <div class="msg-bubble">Hi, just paid — really looking forward to it. When can you ship?</div>
+              <div class="msg-time">2 May · 3:14pm</div>
+            </div>
+
+            <div class="msg seller">
+              <div class="msg-who">Seller (Alex)</div>
+              <div class="msg-bubble">Hi Mike! Will drop it to NZ Post tomorrow morning. Will add the tracking number once I have it.</div>
+              <div class="msg-time">2 May · 4:02pm</div>
+            </div>
+
+            <div class="system-msg">Item marked shipped — tracking NZ123456789 · 3 May 2026</div>
+
+            <div class="msg buyer">
+              <div class="msg-who">Buyer (Mike)</div>
+              <div class="msg-bubble">Cheers! Tracking shows it's in Auckland — should be here tomorrow. Will release funds once it arrives 👍</div>
+              <div class="msg-time">4 May · 11:22am</div>
+            </div>
+          </div>
+
+          <div class="privacy-banner">
+            🔒 Messages are stored by SafeSend and may be reviewed if a dispute is raised.
+          </div>
+
+          <div class="thread-input">
+            <input type="text" placeholder="Type a message…" id="msgInput" />
+            <button class="thread-send" onclick="sendMsg()">Send</button>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div style="background:white;border-radius:14px;box-shadow:0 2px 12px rgba(0,0,0,0.07);padding:20px;">
+          <div style="font-weight:700;font-size:15px;margin-bottom:12px;">Why in-app messaging beats sharing phone numbers</div>
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            <div style="display:flex;gap:10px;font-size:13px;"><span style="color:#0f766e;font-weight:700;flex-shrink:0;">✓</span><div><strong>Dispute evidence.</strong> Every message is timestamped and stored. If a buyer claims they never received a shipping notification, the thread proves otherwise.</div></div>
+            <div style="display:flex;gap:10px;font-size:13px;"><span style="color:#0f766e;font-weight:700;flex-shrink:0;">✓</span><div><strong>Deal stays on platform.</strong> No risk of parties agreeing to bypass escrow once they're messaging outside SafeSend.</div></div>
+            <div style="display:flex;gap=10px;font-size:13px;"><span style="color:#0f766e;font-weight:700;flex-shrink:0;">✓</span><div><strong>Privacy protected.</strong> Neither party's contact details are exposed. Admin can read the thread if a dispute is raised.</div></div>
+            <div style="display:flex;gap:10px;font-size:13px;"><span style="color:#0f766e;font-weight:700;flex-shrink:0;">✓</span><div><strong>System messages inline.</strong> State transitions (funded, shipped, delivered) appear in the thread automatically — everyone sees the same timeline.</div></div>
+          </div>
+        </div>
+
+        <div style="background:white;border-radius:14px;box-shadow:0 2px 12px rgba(0,0,0,0.07);padding:20px;">
+          <div style="font-weight:700;font-size:15px;margin-bottom:12px;">What to build — v1 vs v2</div>
+          <div style="font-size:13px;color:#475569;line-height:1.6;">
+            <div style="margin-bottom:10px;"><span style="background:#f0fdf4;color:#15803d;font-weight:700;padding:2px 8px;border-radius:99px;font-size:11px;">BUILD NOW</span></div>
+            Simple async thread — messages stored in DB, email notification to other party on each new message with a "View in SafeSend" link. No WebSockets needed. Both parties check the deal page to see replies. This works fine for deals that take 2–5 days.<br><br>
+            <div style="margin-bottom:10px;"><span style="background:#fef9c3;color:#92400e;font-weight:700;padding:2px 8px;border-radius:99px;font-size:11px;">V2 LATER</span></div>
+            Real-time chat with WebSocket push notifications. Only needed if you have high-frequency traders doing multiple deals per day.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- IMPLEMENTATION -->
+  <div id="impl" class="pane">
+    <div class="impl-grid">
+
+      <div class="impl-card">
+        <h3>📧 Resend (Email)</h3>
+        <div class="impl-sub">Already installed. Just add more template functions to email.ts</div>
+        <div class="code-block"><span class="cm">// email.ts — add alongside sendMagicLinkEmail</span>
+
+<span class="kw">export async function</span> <span class="fn">sendDealFundedEmail</span>(
+  sellerEmail: <span class="str">string</span>,
+  deal: Deal
+): Promise&lt;<span class="str">void</span>&gt; {
+  <span class="kw">await</span> resend.emails.send({
+    from: <span class="str">"SafeSend &lt;noreply@safesend.nz&gt;"</span>,
+    to: sellerEmail,
+    subject: <span class="str">`Payment received — ship "${deal.title}" now`</span>,
+    html: fundedEmailHtml(deal)
+  });
+}
+
+<span class="cm">// Call in routes/deals.ts after transitionDeal():</span>
+<span class="kw">await</span> <span class="fn">sendDealFundedEmail</span>(deal.sellerEmail, updated)
+  .<span class="fn">catch</span>(err => req.log.<span class="fn">error</span>({ err }, <span class="str">"Email failed"</span>));
+<span class="cm">// Always catch — email failure ≠ deal failure</span></div>
+        <div class="cost-box">
+          <strong>Cost:</strong> Resend free tier = 3,000 emails/month. Paid = $20/month for 50k emails. Negligible vs SafeSend revenue.
+        </div>
+      </div>
+
+      <div class="impl-card">
+        <h3>💬 Twilio (SMS)</h3>
+        <div class="impl-sub">New dependency. Simple to add alongside email calls</div>
+        <div class="code-block"><span class="cm"># Install</span>
+npm install twilio
+
+<span class="cm">// sms.ts — new file</span>
+<span class="kw">import</span> twilio <span class="kw">from</span> <span class="str">"twilio"</span>;
+
+<span class="kw">const</span> client = twilio(
+  process.env.<span class="str">TWILIO_ACCOUNT_SID</span>,
+  process.env.<span class="str">TWILIO_AUTH_TOKEN</span>
+);
+
+<span class="kw">export async function</span> <span class="fn">sendSms</span>(
+  to: <span class="str">string</span>,
+  body: <span class="str">string</span>
+): Promise&lt;<span class="str">void</span>&gt; {
+  <span class="kw">if</span> (!to || !process.env.<span class="str">TWILIO_PHONE_NUMBER</span>) <span class="kw">return</span>;
+  <span class="kw">await</span> client.messages.<span class="fn">create</span>({
+    from: process.env.<span class="str">TWILIO_PHONE_NUMBER</span>,
+    to: <span class="fn">formatNzNumber</span>(to),
+    body
+  });
+}
+
+<span class="cm">// Usage in deals.ts:</span>
+<span class="kw">await</span> <span class="fn">sendSms</span>(deal.sellerPhone,
+  <span class="str">`SafeSend: Payment received for "${deal.title}". Ship now and enter your tracking number: safesend.nz/deals/${deal.id}`</span>
+).<span class="fn">catch</span>(() => {}); <span class="cm">// silent fail</span></div>
+        <div class="cost-box">
+          <strong>Cost NZ:</strong> ~$0.08/SMS via Twilio. A deal generating $39 fee sends ~6 SMS = $0.48. <strong>1.2% of fee revenue.</strong>
+        </div>
+      </div>
+
+      <div class="impl-card">
+        <h3>💬 Deal Messages DB</h3>
+        <div class="impl-sub">New table — simple async thread per deal</div>
+        <div class="code-block"><span class="cm">// schema/deal_messages.ts</span>
+<span class="kw">export const</span> dealMessagesTable = <span class="fn">pgTable</span>(<span class="str">"deal_messages"</span>, {
+  id:         serial(<span class="str">"id"</span>).primaryKey(),
+  dealId:     text(<span class="str">"deal_id"</span>).<span class="fn">notNull</span>()
+              .<span class="fn">references</span>(() => dealsTable.id, { onDelete: <span class="str">"cascade"</span> }),
+  senderEmail:text(<span class="str">"sender_email"</span>).<span class="fn">notNull</span>(),
+  content:    text(<span class="str">"content"</span>).<span class="fn">notNull</span>(),
+  isSystem:   boolean(<span class="str">"is_system"</span>).<span class="fn">default</span>(<span class="kw">false</span>),
+  createdAt:  timestamp(<span class="str">"created_at"</span>).<span class="fn">defaultNow</span>(),
+});
+
+<span class="cm">// New routes in routes/messages.ts:</span>
+<span class="cm">// GET  /deals/:dealId/messages  — fetch thread</span>
+<span class="cm">// POST /deals/:dealId/messages  — send message</span>
+<span class="cm">//   → validates sender is buyer or seller</span>
+<span class="cm">//   → emails other party via Resend</span>
+<span class="cm">//   → returns updated thread</span></div>
+        <div class="cost-box">
+          <strong>Effort:</strong> 1 new DB table + 2 new routes + 1 email template. Estimated <strong>3–4 hours</strong> of agent work.
+        </div>
+      </div>
+
+      <div class="impl-card">
+        <h3>📱 Phone Field on DB</h3>
+        <div class="impl-sub">Small schema addition — store per-deal, not per-user</div>
+        <div class="code-block"><span class="cm">// Add to deals schema:</span>
+sellerPhone: text(<span class="str">"seller_phone"</span>),
+buyerPhone:  text(<span class="str">"buyer_phone"</span>),
+
+<span class="cm">// Add to CreateDealBody Zod schema:</span>
+sellerPhone: z.string()
+  .<span class="fn">regex</span>(<span class="str">/^(\+64|0)[0-9]{8,9}$/</span>, <span class="str">"Enter a valid NZ number"</span>)
+  .<span class="fn">optional</span>(),
+buyerPhone: z.string()
+  .<span class="fn">regex</span>(<span class="str">/^(\+64|0)[0-9]{8,9}$/</span>, <span class="str">"Enter a valid NZ number"</span>)
+  .<span class="fn">optional</span>(),
+
+<span class="cm">// formatNzNumber helper:</span>
+<span class="kw">function</span> <span class="fn">formatNzNumber</span>(n: <span class="str">string</span>): <span class="str">string</span> {
+  <span class="kw">return</span> n.<span class="fn">startsWith</span>(<span class="str">"0"</span>)
+    ? <span class="str">"+64"</span> + n.<span class="fn">slice</span>(1)  <span class="cm">// 021... → +6421...</span>
+    : n;
+}</div>
+        <div class="cost-box">
+          <strong>Privacy:</strong> Never return <code>sellerPhone</code> or <code>buyerPhone</code> in API responses to the other party. Omit from <code>GetDealResponse</code> Zod schema.
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function show(tab) {
+  document.querySelectorAll('.pane').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById(tab).classList.add('active');
+  event.target.classList.add('active');
+}
+
+function calcFee() {
+  const amt = parseFloat(document.getElementById('demoAmt').value) || 0;
+  const fee = amt > 0 ? Math.max(amt * 0.04, 5) : 5;
+  const total = amt > 0 ? amt + fee : null;
+  document.getElementById('dAmt').textContent = amt > 0 ? `$${amt.toFixed(2)}` : '$0.00';
+  document.getElementById('dFee').textContent = `$${fee.toFixed(2)}`;
+  document.getElementById('dTotal').textContent = total ? `$${total.toFixed(2)}` : '—';
+}
+
+function sendMsg() {
+  const input = document.getElementById('msgInput');
+  const text = input.value.trim();
+  if (!text) return;
+  const messages = document.querySelector('.messages');
+  const div = document.createElement('div');
+  div.className = 'msg buyer';
+  div.innerHTML = `
+    <div class="msg-who">Buyer (Mike)</div>
+    <div class="msg-bubble">${text}</div>
+    <div class="msg-time">Just now</div>
+  `;
+  messages.appendChild(div);
+  input.value = '';
+  messages.scrollTop = messages.scrollHeight;
+}
+
+document.getElementById('msgInput').addEventListener('keypress', e => {
+  if (e.key === 'Enter') sendMsg();
+});
+</script>
+</body>
+</html>

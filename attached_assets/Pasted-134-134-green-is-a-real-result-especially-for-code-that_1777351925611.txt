@@ -1,0 +1,35 @@
+134/134 green is a real result, especially for code that was a half-mocked demo three iterations ago. And the four fixes you described are exactly the kind of debugging that proves the suite is working — you weren't fixing the tests to make them pass, you were finding genuine issues the tests caught.
+
+Worth naming what each of those fixes actually meant:
+
+- **Buffer serialisation in supertest** — that's the kind of thing that would have silently broken in production webhooks too, just under different conditions. Catching it in a test instead of via "why are real Stripe webhooks failing" at 11pm is a good trade.
+- **Version field stripped from API responses** — important. The frontend can't do optimistic-concurrency-aware retries if the server doesn't return the version. Quiet bug, real consequences.
+- **Zod cap racing the Escrow.com message** — minor UX bug, but it's the kind of thing users would have hit and then DM'd you about with a screenshot.
+- **Test isolation under concurrent resets** — this one's interesting because it's a *test infrastructure* bug, not a product bug. Worth holding onto whatever pattern you used, because it'll come up again as the suite grows.
+
+Where this leaves you in the bigger picture:
+
+The five concerns I flagged in the previous turn (mixed Stripe pattern, webhook concurrency gap, `recordTransition` losing `fromState`, `cancel` vs `refund` for captured PIs, plus the now-confirmed-real Stripe API version) — those are still sitting there. The tests all pass because none of them currently exercise those specific paths. You'd want a follow-up round that adds:
+
+- A test that creates a real PaymentIntent in Stripe test mode, captures it, then exercises the cancel path — this will fail loudly if the cancel-vs-refund branch is wrong
+- A concurrency test specifically for the webhook handlers (fire two webhook deliveries simultaneously, assert version is 1 not 2)
+- An audit-trail test that asserts `fromState` is non-null for transitions that go through `transitionDeal`
+
+Not urgent — these are correctness improvements, not "the app is broken" bugs. But worth queueing for the next focused prompt to Replit Agent. I'd phrase it as: "the test suite is green but I want to add four more tests that should currently fail, then fix the underlying code to make them pass." That keeps the agent honest — it can't paper over the issues by tweaking the tests, because the tests are the spec.
+
+Two practical things to tee up next:
+
+**1. CI before features.** Get this test suite running on every Replit deploy or git push before you build any new feature on top. The cost of letting a regression slip in untested is much higher than the cost of letting Replit Agent run `pnpm test` automatically. If Replit's deployment hooks support pre-deploy tests, wire it up; otherwise a GitHub Action on push works fine.
+
+**2. Stripe webhook end-to-end.** The cleanest way to gain real confidence is to install the Stripe CLI on Replit (`stripe listen --forward-to localhost:5000/api/webhooks/stripe`) and trigger live test events: `stripe trigger payment_intent.succeeded`. This exercises the full path including signature generation by Stripe itself, not just supertest's simulation of it. If everything wires up correctly there, you've validated the production webhook path.
+
+Then the actual remaining MVP gating items, in rough priority:
+
+1. Magic-link email auth — this is still the biggest unaddressed item. The whole authorization model still rests on "trust the email in the request body."
+2. Frontend wiring of the real Stripe Payment Element on the buyer's confirm-payment screen (you have the backend creating the PaymentIntent and returning `clientSecret`, but the frontend needs to actually use Stripe.js to capture the card)
+3. Signature-required courier service enforcement at the tracking-entry step — the fraud-prevention core
+4. Talk to a NZ fintech lawyer before live transactions
+
+The first three are Replit Agent territory now that you have a test suite to anchor against. The last one is the long pole on go-live regardless of what you build.
+
+You're in a meaningfully better place than two weeks ago. The codebase has gone from clickable-demo to has-real-correctness-guarantees in a tractable number of iterations, and the toolchain choice (stay on Replit, write tight prompts) is paying off. Good to see.

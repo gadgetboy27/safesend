@@ -1,0 +1,79 @@
+1. Terms of Service
+Last Updated: May 2026
+
+1. The SafeSend Protocol
+SafeSend is an escrow intermediary service. By using this platform, you engage SafeSend to act as a neutral stakeholder. We facilitate secure transactions using a "Manual Capture" method via Stripe. SafeSend does not take title to any goods and is not a party to the underlying sale contract.
+
+2. Payment Processing & Stripe Terms
+Payment processing services for SafeSend are provided by Stripe Payments New Zealand Limited and are subject to the Stripe Connected Account Agreement, which includes the Stripe Services Agreement. By using SafeSend, you agree to be bound by these Stripe terms. SafeSend triggers the "Capture" of funds based on delivery data, but the physical holding of funds is managed by Stripe.
+
+3. Fees
+SafeSend charges a 4% platform fee (minimum $5.00 NZD). This fee is included in the total charged to the Buyer at the time of payment. Stripe’s processing fees are separate and, per Stripe’s policy, are non-refundable once a transaction is initiated.
+
+4. Eligibility & Identity
+You must be 18+ and a resident of New Zealand. All identity verification (KYC) and AML checks are handled securely by Stripe. SafeSend does not store your government IDs or full credit card numbers.
+
+5. Limitation of Liability
+SafeSend is a private service operating under the Trusts Act 2019. We act as a neutral trustee. Our liability is limited to the amount held in escrow for the relevant deal. We are not liable for courier delays, item quality, or indirect losses.
+
+2. Escrow Agreement
+Version 1.0 — Effective May 2026
+
+This Agreement is a binding three-party contract between the Buyer (Depositor), the Seller (Beneficiary), and SafeSend (Escrow Agent) under the Contract and Commercial Law Act 2017.
+
+1. Roles and Duties
+SafeSend: Acts as a Neutral Trustee under the Trusts Act 2019. We owe both parties a "Duty of Impartiality" and "Duty of Good Faith."
+
+Buyer: Responsible for depositing cleared funds and confirming receipt or raising a dispute within the 48-hour inspection window.
+
+Seller: Responsible for shipping via a tracked courier and providing an accurate item description.
+
+2. The Mechanics of the "Hold"
+SafeSend uses the Stripe API to authorize and capture funds. Funds are held in a segregated Stripe pool. SafeSend holds the "Digital Key" to these funds and will only issue a "Capture" (Pay Seller) or "Refund" (Pay Buyer) instruction when objective Trigger Conditions are met.
+
+3. Trigger Conditions for Release
+Funds are released to the Seller only when:
+
+Manual Confirmation: The Buyer confirms receipt in the app.
+
+Auto-Release: A verified New Zealand courier API confirms "Delivered," and 48 hours pass without the Buyer raising a dispute.
+
+Dispute Resolution: A SafeSend administrator resolves a dispute in the Seller's favor.
+
+4. Longstop Dates (Automatic Deadlines)
+Ship-by: Seller must provide a tracking number within 5 Business Days or the Buyer is automatically refunded.
+
+Scan-by: The tracking number must show an "In Transit" scan within 48 hours of being entered.
+
+5. Dispute Resolution & The NZ Tribunal
+If a dispute is raised, funds are frozen. SafeSend will review evidence (photos, tracking, chat logs) and issue a decision within 14 days. SafeSend recognizes the New Zealand Disputes Tribunal as the final authority. If we cannot reach a decision, or if you disagree with our resolution, SafeSend will hold the funds until a formal Order is issued by the Tribunal or a Court.
+
+3. Privacy Policy
+Last Updated: May 2026
+
+1. Privacy Act 2020 Compliance
+SafeSend is committed to protecting your personal information in accordance with the New Zealand Privacy Act 2020.
+
+2. Information We Collect
+Account Data: Email address for authentication (Magic Links).
+
+Transaction Data: Item descriptions, agreed prices, and courier tracking numbers.
+
+Payment Data: All sensitive financial and identity data (IDs/Cards) is collected and stored by Stripe. SafeSend does not have access to your full financial details.
+
+3. Third-Party Data Sharing
+We share data only as necessary to fulfill the service:
+
+Stripe: To process payments and verify identity.
+
+Tracking Services: To verify delivery status via courier APIs.
+
+4. Your Rights
+You have the right to access any information we hold about you and request corrections. Because we facilitate financial transactions, we retain deal records for 7 years to comply with NZ tax and audit laws. For data requests, contact privacy@safesend.nz.
+
+What to do next:
+Replace the drafts: Copy these into your site's Legal/Terms pages.
+
+The Stripe Link: Ensure the links in the ToS to Stripe’s agreements are clickable.
+
+Final Polish: Check that your "Contact Us" email (e.g., hello@safesend.nz) is updated in the text.

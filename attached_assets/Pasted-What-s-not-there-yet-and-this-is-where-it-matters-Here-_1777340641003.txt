@@ -1,0 +1,66 @@
+What's not there yet — and this is where it matters
+Here's the honest part. None of the things I warned would be subtly wrong have been done correctly. I can point at lines:
+1. Stripe is entirely simulated. No SDK installed.
+artifacts/api-server/package.json has no stripe dependency. The "confirm payment" endpoint at routes/deals.ts:178 just does:
+tsconst mockPaymentIntentId = `pi_demo_${Date.now()}`;
+…and immediately sets the deal to funded. There is no PaymentIntent, no card capture, no transfer_group, no Connect transfer on release. The release-funds endpoint only flips a state column — no money moves. Same for seller onboarding (routes/sellers.ts:42): mockOnboardingUrl with a mock=true query param.
+This is a demo, not an MVP. To be fair: the agent labelled this clearly with comments like "In a real implementation we'd create a Stripe PaymentIntent here." It didn't lie. But it also didn't build the actual feature you're trying to ship.
+2. The Stripe webhook has zero signature validation.
+routes/tracking.ts:118-120:
+tsrouter.post("/webhooks/stripe", async (req, res): Promise<void> => {
+  // Real Stripe webhook validation would go here with stripe.webhooks.constructEvent
+  const event = req.body as { type?: string; ... };
+In production this means anyone on the internet can POST /api/webhooks/stripe with a forged payment_intent.succeeded payload and instantly fund any deal — moving it to ready-to-release without ever paying. This is the worst-case escrow vulnerability. Critical, but obvious enough to fix.
+3. The AfterShip webhook tries to validate but the implementation is broken.
+routes/tracking.ts:54-56:
+tsconst signature = req.headers["aftership-hmac-sha256"] as string;
+const body = JSON.stringify(req.body);
+const expected = crypto.createHmac("sha256", hmacSecret).update(body).digest("hex");
+Express has already parsed req.body into a JS object by the time this code runs. Re-JSON.stringify-ing it produces a different byte sequence than what AfterShip originally signed — different key ordering, different whitespace, different number formatting. The HMAC will never match in production, so either every webhook gets rejected (the deal never auto-progresses to delivered) or, more likely, the agent works around it by removing validation when it doesn't work.
+The fix needs a express.raw({ type: 'application/json' }) middleware mounted only on the webhook routes, and the raw Buffer saved before JSON parsing. Same problem applies to the Stripe webhook fix. This is a textbook bug that's invisible in development testing because dev environments often don't enforce signatures.
+4. No row-level locking, no version column, no concurrency control.
+grep for FOR UPDATE, version, optimistic returns nothing. The state transitions are pure read-then-write:
+tsconst [deal] = await db.select()...where(eq(dealsTable.id, ...));
+if (deal.state !== "funded") { return error; }
+await db.update(dealsTable).set({ state: "shipped", ... });
+If a buyer's release-funds fires at the same instant as a seller's mark-shipped, both can pass the check and one will silently overwrite the other. Even worse for webhooks: an AfterShip Delivered event arriving while an admin resolve-dispute is in flight can produce illegal state combinations.
+5. No idempotency on webhooks.
+AfterShip and Stripe both retry on 5xx and on network timeouts. No event-ID deduplication table, no onConflictDoNothing on a unique webhook event ID — only on tracking checkpoint events, which is partial protection at best. A retried payment_intent.succeeded could theoretically double-fund (it doesn't double-charge in the current mock, but once Stripe is real, the pattern matters because the equivalent retry on the release-funds webhook could double-transfer to a seller).
+6. No timer/queue infrastructure for the 48h auto-release.
+grep for setTimeout, cron, bullmq, graphile returns nothing. The current model requires the buyer to manually click "release funds" — there's no time-based path from delivered to complete. That's a product decision (and arguably a safer one for MVP — "buyer must click" beats "auto-release while buyer's on holiday and didn't notice the parcel was wrong"), but the design doc said 48h auto-release. Worth deciding consciously which model you want.
+7. No auth model whatsoever — emails in the request body are the entire identity check.
+routes/deals.ts:171:
+tsif (deal.buyerEmail !== body.data.buyerEmail) {
+  res.status(403).json({ error: "Only the buyer can confirm payment" });
+}
+If I know the deal ID and the buyer's email, I am the buyer. There's no session, no JWT, no email magic-link verification, no PIN. The middlewares/ folder is empty (just a .gitkeep).
+For a private demo this is fine. For real money it's a non-starter — and it's not just a "add a login page" fix, because the entire frontend assumes "you are whoever you say you are via URL parameters." Adding real auth touches every page and every API call.
+8. Signature-required courier service isn't enforced at tracking entry.
+The seller can type any tracking number. There's no validation that the courier service tier includes signature capture, which was — in my last turn — the single most important fraud-prevention requirement. The exact scam vector you're trying to prevent walks straight through this.
+Net verdict on the build
+It's a credible clickable demo with a real schema and a real frontend. It's roughly 30-40% of an MVP. The 60-70% that's missing isn't UI or routes or screens — it's exactly the parts where money correctness lives. State integrity, webhook security, real Stripe wiring, idempotency, auth, fraud-prevention enforcement.
+That distribution isn't an indictment of Replit Agent specifically. It's the predictable shape of what AI agents produce when you say "build escrow": they produce the visible surface area and stub the invariant-critical parts. Almost any agent — Claude Code included — will have the same pattern unless you specifically prompt for the critical-correctness pieces.
+On Replit vs Claude Code
+You said you don't think this app is too hard for Replit because it's "just a frontend, backend, and APIs." That framing is correct for the parts you've already seen — the screens, the CRUD, the schema. It's the wrong framing for what's left. The remaining work isn't "more APIs"; it's correctness invariants under concurrency, with adversarial inputs, where bugs cost real money and reputation. That's a different kind of work, and the tooling matters more for it than it does for screen-building.
+That said, "correct tool for correct job" beats "switch everything." Here's the honest comparison:
+Stay with Replit Agent if: your primary development style is rapid iteration with deployment integrated, you want one environment for product/UI/screens/scaffolding, and you're comfortable doing manual review passes on the money-critical modules yourself. Replit's strengths are real — instant DB provisioning, secrets management, click-to-deploy, no local env to maintain. For an entrepreneur juggling TokenVault, HouseMatch, ROAM, and this in parallel, that matters a lot. Don't underestimate the cost of context-switching to a fresh local toolchain.
+Bring in Claude Code if: you want stronger guarantees on the parts where bugs are expensive. Specifically, Claude Code is meaningfully better at: holding many files in context simultaneously (so it can see how a state machine change ripples through routes, schema, hooks, and frontend together), maintaining invariants across multi-file edits without forgetting them by the end of the session, sitting through long debugging sessions without losing track, and writing tests proactively rather than only when asked. That's not me being a Claude partisan — those are the dimensions on which it's genuinely stronger today, and they happen to be exactly the dimensions that money-handling code stresses.
+The hybrid path I'd actually recommend: keep building everything else on Replit. UI iteration, new screens, admin features, the public marketing site, deployment — all Replit. For these specific files, do one focused Claude Code pass on a local clone:
+
+artifacts/api-server/src/routes/tracking.ts — fix the webhook signature validation properly (raw body middleware, Stripe SDK constructEvent, idempotency table)
+artifacts/api-server/src/routes/deals.ts — add a version column on deals and convert all state-transition writes to optimistic concurrency, add a transition-validity table that encodes legal (from, to) pairs in one place
+A new lib/payments package — encapsulate every Stripe call, every dollar-to-cent boundary, every fee allocation, behind a clean interface so the rest of the code never touches money math directly
+A new middlewares/auth.ts — magic-link email auth with short-lived signed tokens, applied to every mutation
+
+That's maybe 2-3 focused sessions of work. Push the result back to Replit. From then on, Replit Agent works against a hardened core and is much less likely to introduce regressions in the money paths because the patterns are visible in the code.
+If you don't want to maintain two toolchains at all, my honest read is: stay with Replit, but change what you ask it for. Don't say "wire up Stripe" — say "wire up Stripe with a raw-body webhook middleware, signature validation via stripe.webhooks.constructEvent, an idempotency table keyed on event ID, and tests that simulate webhook retries." Specificity defeats most of the failure modes I called out above. The agent isn't dumb; it just doesn't know what it doesn't know about your domain unless you tell it.
+Concrete next step
+Whichever tool you use, the order of operations is:
+
+Real Stripe Connect Express integration — actually install stripe, do the account-link onboarding flow with a real test account, end-to-end. Until this works in test mode, nothing else matters.
+Real PaymentIntent on confirm-payment with transfer_group: dealId and Stripe-hosted Checkout or Payment Element on the frontend
+Real Stripe webhook with signature validation, idempotency table, and the raw-body middleware
+Real Connect transfer on release-funds with the same transfer_group
+Fix the AfterShip HMAC bug (raw body middleware on that route too)
+Add the version column and optimistic concurrency to deal mutations
+Add magic-link auth before showing this to anyone outside your test circle

@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SafeSend — How It Works</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #f1f5f9;
+  color: #1e293b;
+  min-height: 100vh;
+}
+
+/* ── Hero ─────────────────────────────────────────── */
+.hero {
+  background: linear-gradient(135deg, #0f766e 0%, #0d9488 60%, #14b8a6 100%);
+  color: white;
+  text-align: center;
+  padding: 64px 24px 80px;
+}
+.hero-badge {
+  display: inline-block;
+  background: rgba(255,255,255,0.15);
+  border: 1px solid rgba(255,255,255,0.3);
+  border-radius: 99px;
+  padding: 4px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 16px;
+}
+.hero h1 {
+  font-size: clamp(28px, 5vw, 46px);
+  font-weight: 800;
+  line-height: 1.15;
+  margin-bottom: 14px;
+}
+.hero h1 span { color: #99f6e4; }
+.hero p {
+  font-size: clamp(15px, 2.5vw, 18px);
+  opacity: 0.88;
+  max-width: 520px;
+  margin: 0 auto 32px;
+  line-height: 1.6;
+}
+.hero-steps {
+  display: flex;
+  justify-content: center;
+  gap: 0;
+  flex-wrap: wrap;
+  max-width: 560px;
+  margin: 0 auto;
+}
+.hero-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0.92;
+  padding: 6px 12px;
+}
+.hero-step-num {
+  width: 24px; height: 24px;
+  background: rgba(255,255,255,0.25);
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700;
+  flex-shrink: 0;
+}
+.hero-arrow { opacity: 0.5; font-size: 16px; padding: 0 4px; }
+
+/* ── Demo section ─────────────────────────────────── */
+.demo-section {
+  max-width: 1080px;
+  margin: -40px auto 0;
+  padding: 0 20px 60px;
+}
+
+.demo-label {
+  text-align: center;
+  margin-bottom: 20px;
+}
+.demo-label span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #fef9c3;
+  border: 1px solid #fde047;
+  color: #854d0e;
+  border-radius: 99px;
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.demo-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  align-items: start;
+}
+@media (max-width: 700px) {
+  .demo-grid { grid-template-columns: 1fr; }
+}
+
+/* ── Form card ────────────────────────────────────── */
+.card {
+  background: white;
+  border-radius: 16px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+  overflow: hidden;
+}
+.card-header {
+  padding: 20px 24px 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.card-icon {
+  width: 38px; height: 38px;
+  background: #f0fdf4;
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px;
+}
+.card-title { font-size: 17px; font-weight: 700; }
+.card-sub { font-size: 12px; color: #64748b; margin-top: 1px; }
+.card-body { padding: 20px 24px 24px; }
+
+/* ── Form fields ──────────────────────────────────── */
+.field { margin-bottom: 16px; }
+.field:last-child { margin-bottom: 0; }
+label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 5px;
+}
+input, textarea, select {
+  width: 100%;
+  padding: 10px 13px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 14px;
+  color: #1e293b;
+  background: white;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  outline: none;
+  font-family: inherit;
+}
+input:focus, textarea:focus, select:focus {
+  border-color: #0d9488;
+  box-shadow: 0 0 0 3px rgba(13,148,136,0.12);
+}
+input.error { border-color: #f43f5e; }
+textarea { resize: vertical; min-height: 72px; }
+
+.amount-wrap { position: relative; }
+.amount-wrap .prefix {
+  position: absolute; left: 12px; top: 50%;
+  transform: translateY(-50%);
+  font-weight: 600; color: #64748b; font-size: 14px;
+  pointer-events: none;
+}
+.amount-wrap input { padding-left: 26px; }
+
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+.field-hint { font-size: 11px; color: #94a3b8; margin-top: 4px; }
+.field-error { font-size: 11px; color: #f43f5e; margin-top: 4px; display: none; }
+
+/* ── Fee box ──────────────────────────────────────── */
+.fee-box {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin: 16px 0;
+}
+.fee-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: #64748b;
+  padding: 3px 0;
+}
+.fee-row.total {
+  border-top: 1px solid #e2e8f0;
+  margin-top: 8px;
+  padding-top: 10px;
+  font-weight: 700;
+  font-size: 15px;
+  color: #1e293b;
+}
+.fee-row.total .amount { color: #0f766e; }
+
+/* ── Submit button ────────────────────────────────── */
+.btn-primary {
+  width: 100%;
+  padding: 13px;
+  background: #0f766e;
+  color: white;
+  border: none;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.btn-primary:hover { background: #0d6560; }
+.btn-primary:active { transform: scale(0.99); }
+.btn-primary:disabled { background: #94a3b8; cursor: not-allowed; }
+
+/* ── Right panel: timeline ────────────────────────── */
+.timeline-card { display: flex; flex-direction: column; gap: 0; }
+
+.tl-step {
+  display: flex;
+  gap: 14px;
+  padding: 18px 20px;
+  border-radius: 12px;
+  margin-bottom: 8px;
+  transition: all 0.3s;
+  opacity: 0.38;
+  background: white;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.05);
+}
+.tl-step.active {
+  opacity: 1;
+  box-shadow: 0 4px 16px rgba(15,118,110,0.12);
+  border: 1.5px solid #99f6e4;
+}
+.tl-step.done {
+  opacity: 0.72;
+  background: #f0fdf4;
+}
+
+.tl-icon {
+  width: 40px; height: 40px;
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px;
+  flex-shrink: 0;
+  background: #f1f5f9;
+}
+.tl-step.active .tl-icon { background: #ccfbf1; }
+.tl-step.done .tl-icon { background: #dcfce7; }
+
+.tl-body { flex: 1; }
+.tl-who {
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #94a3b8;
+  margin-bottom: 2px;
+}
+.tl-step.active .tl-who { color: #0d9488; }
+.tl-title { font-size: 14px; font-weight: 700; margin-bottom: 2px; }
+.tl-desc { font-size: 12px; color: #64748b; line-height: 1.5; }
+
+/* ── Deal preview (success state) ─────────────────── */
+.deal-preview {
+  display: none;
+  background: white;
+  border-radius: 16px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+  overflow: hidden;
+  animation: fadeUp 0.4s ease;
+}
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.dp-header {
+  background: linear-gradient(135deg, #0f766e, #0d9488);
+  color: white;
+  padding: 24px;
+  text-align: center;
+}
+.dp-check {
+  width: 56px; height: 56px;
+  background: rgba(255,255,255,0.2);
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 28px;
+  margin: 0 auto 12px;
+}
+.dp-header h3 { font-size: 20px; font-weight: 800; }
+.dp-header p { font-size: 13px; opacity: 0.85; margin-top: 4px; }
+
+.dp-body { padding: 20px 24px; }
+.dp-item { display: flex; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid #f1f5f9; font-size: 13px; }
+.dp-item:last-child { border-bottom: none; }
+.dp-item .label { color: #64748b; }
+.dp-item .value { font-weight: 600; color: #1e293b; }
+.dp-item .value.green { color: #0f766e; }
+
+.dp-email-preview {
+  margin: 16px 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.dp-email-header {
+  background: #f8fafc;
+  padding: 10px 14px;
+  font-size: 11px;
+  color: #64748b;
+  border-bottom: 1px solid #e2e8f0;
+}
+.dp-email-body {
+  padding: 16px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.dp-email-btn {
+  display: inline-block;
+  margin: 10px 0;
+  padding: 10px 20px;
+  background: #0f766e;
+  color: white;
+  border-radius: 7px;
+  font-weight: 700;
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.demo-banner {
+  background: #fef9c3;
+  border: 1px solid #fde047;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 12px;
+  color: #92400e;
+  text-align: center;
+  margin-top: 16px;
+}
+
+.btn-reset {
+  width: 100%;
+  padding: 11px;
+  background: transparent;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #64748b;
+  cursor: pointer;
+  margin-top: 10px;
+  transition: all 0.15s;
+}
+.btn-reset:hover { border-color: #0d9488; color: #0d9488; }
+
+/* ── Trustmarks ───────────────────────────────────── */
+.trustmarks {
+  display: flex;
+  justify-content: center;
+  gap: 24px;
+  flex-wrap: wrap;
+  margin-top: 40px;
+  padding: 0 20px;
+}
+.tm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #475569;
+  font-weight: 500;
+}
+.tm-icon { font-size: 18px; }
+</style>
+</head>
+<body>
+
+<!-- Hero -->
+<div class="hero">
+  <div class="hero-badge">🇳🇿 Built for New Zealand</div>
+  <h1>Buy & sell with<br><span>total confidence</span></h1>
+  <p>SafeSend holds your payment in escrow until the item arrives exactly as described. No more crossed fingers on Trade Me.</p>
+  <div class="hero-steps">
+    <div class="hero-step"><div class="hero-step-num">1</div>Seller creates deal</div>
+    <div class="hero-arrow">→</div>
+    <div class="hero-step"><div class="hero-step-num">2</div>Buyer pays securely</div>
+    <div class="hero-arrow">→</div>
+    <div class="hero-step"><div class="hero-step-num">3</div>Item arrives, funds release</div>
+  </div>
+</div>
+
+<!-- Demo -->
+<div class="demo-section">
+  <div class="demo-label">
+    <span>✏️ &nbsp;TRY IT — CREATE A DEMO DEAL BELOW</span>
+  </div>
+
+  <div class="demo-grid">
+
+    <!-- Left: Form -->
+    <div>
+      <!-- Form card -->
+      <div class="card" id="formCard">
+        <div class="card-header">
+          <div class="card-icon">📋</div>
+          <div>
+            <div class="card-title">Create a Deal</div>
+            <div class="card-sub">Seller fills this in and sends it to the buyer</div>
+          </div>
+        </div>
+        <div class="card-body">
+
+          <div class="field">
+            <label>Item Title</label>
+            <input type="text" id="title" placeholder="e.g. Gibson Les Paul 2019 Standard"
+              oninput="onInput()" />
+            <div class="field-error" id="titleErr">Please enter an item title</div>
+          </div>
+
+          <div class="field">
+            <label>Description</label>
+            <textarea id="description" placeholder="Condition, what's included, any specific terms…"
+              oninput="onInput()"></textarea>
+          </div>
+
+          <div class="field">
+            <label>Agreed Price (NZD)</label>
+            <div class="amount-wrap">
+              <span class="prefix">$</span>
+              <input type="number" id="amount" placeholder="0.00" min="1" max="2500"
+                oninput="updateFee()" />
+            </div>
+            <div class="field-hint">Maximum $2,500 per deal.</div>
+            <div class="field-error" id="amountErr">Enter an amount between $1 and $2,500</div>
+          </div>
+
+          <!-- Fee box -->
+          <div class="fee-box">
+            <div class="fee-row"><span>Item price</span><span id="feeItem">$0.00</span></div>
+            <div class="fee-row"><span>SafeSend fee (4%, min $5)</span><span id="feeFee">$5.00</span></div>
+            <div class="fee-row total"><span>Buyer pays</span><span class="amount" id="feeTotal">$5.00</span></div>
+          </div>
+
+          <div class="row">
+            <div class="field">
+              <label>Your Email (Seller)</label>
+              <input type="email" id="sellerEmail" placeholder="you@example.com" oninput="onInput()" />
+              <div class="field-error" id="sellerErr">Enter a valid email</div>
+            </div>
+            <div class="field">
+              <label>Buyer's Email</label>
+              <input type="email" id="buyerEmail" placeholder="buyer@example.com" oninput="onInput()" />
+              <div class="field-error" id="buyerErr">Enter a valid email</div>
+            </div>
+          </div>
+
+          <div style="margin-top:20px;">
+            <button class="btn-primary" id="submitBtn" onclick="submitDemo()">
+              <span>🔒</span> Create Deal &amp; Email Buyer
+            </button>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Deal preview (success) -->
+      <div class="deal-preview" id="dealPreview">
+        <div class="dp-header">
+          <div class="dp-check">✓</div>
+          <h3>Deal Created!</h3>
+          <p>The buyer has been emailed a secure payment link</p>
+        </div>
+        <div class="dp-body">
+          <div class="dp-item"><span class="label">Item</span><span class="value" id="previewTitle">—</span></div>
+          <div class="dp-item"><span class="label">Item price</span><span class="value" id="previewAmount">—</span></div>
+          <div class="dp-item"><span class="label">SafeSend fee</span><span class="value" id="previewFee">—</span></div>
+          <div class="dp-item"><span class="label">Buyer pays</span><span class="value green" id="previewTotal">—</span></div>
+          <div class="dp-item"><span class="label">Seller</span><span class="value" id="previewSeller">—</span></div>
+          <div class="dp-item"><span class="label">Buyer</span><span class="value" id="previewBuyer">—</span></div>
+          <div class="dp-item"><span class="label">Deal ID</span><span class="value" style="font-family:monospace;font-size:11px;" id="previewId">—</span></div>
+
+          <div style="margin-top:16px;">
+            <div style="font-size:12px;font-weight:700;color:#374151;margin-bottom:8px;">📨 Email sent to buyer:</div>
+            <div class="dp-email-preview">
+              <div class="dp-email-header">
+                <strong>From:</strong> SafeSend &lt;noreply@safesend.nz&gt;<br>
+                <strong>To:</strong> <span id="emailTo">—</span><br>
+                <strong>Subject:</strong> <span id="emailSubject">—</span>
+              </div>
+              <div class="dp-email-body">
+                Hi there,<br><br>
+                <strong id="emailSellerName">—</strong> has set up a SafeSend escrow deal for you:<br><br>
+                <strong id="emailItem">—</strong><br>
+                <span id="emailDesc" style="color:#64748b;font-size:12px;">—</span><br><br>
+                Your payment of <strong id="emailTotal">—</strong> will be held securely in escrow and only released to the seller once you confirm the item arrives as described.<br><br>
+                <a class="dp-email-btn" href="#">Review Deal &amp; Pay →</a><br>
+                <span style="font-size:11px;color:#94a3b8;">This link expires in 7 days. Sign in with your email — no password needed.</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="demo-banner">
+            🎭 This is a <strong>demo only</strong> — no real deal was created and no email was sent.<br>
+            <a href="#" style="color:#0f766e;font-weight:700;">Sign up to create real deals →</a>
+          </div>
+
+          <button class="btn-reset" onclick="resetDemo()">← Try another deal</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Timeline -->
+    <div class="timeline-card">
+
+      <div class="tl-step active" id="tl0">
+        <div class="tl-icon">📋</div>
+        <div class="tl-body">
+          <div class="tl-who">Seller</div>
+          <div class="tl-title">Creates the deal</div>
+          <div class="tl-desc">Seller fills in item details, price, and buyer's email. The fee is shown upfront — no surprises.</div>
+        </div>
+      </div>
+
+      <div class="tl-step" id="tl1">
+        <div class="tl-icon">📨</div>
+        <div class="tl-body">
+          <div class="tl-who">System</div>
+          <div class="tl-title">Buyer receives payment link</div>
+          <div class="tl-desc">Buyer gets an email with the deal terms. They review everything before paying a cent.</div>
+        </div>
+      </div>
+
+      <div class="tl-step" id="tl2">
+        <div class="tl-icon">💳</div>
+        <div class="tl-body">
+          <div class="tl-who">Buyer</div>
+          <div class="tl-title">Pays securely via Stripe</div>
+          <div class="tl-desc">Payment is held in escrow — not released to the seller until delivery is confirmed.</div>
+        </div>
+      </div>
+
+      <div class="tl-step" id="tl3">
+        <div class="tl-icon">📦</div>
+        <div class="tl-body">
+          <div class="tl-who">Seller</div>
+          <div class="tl-title">Ships with tracking</div>
+          <div class="tl-desc">Seller enters the tracking number. Both parties can follow the delivery in real time.</div>
+        </div>
+      </div>
+
+      <div class="tl-step" id="tl4">
+        <div class="tl-icon">✅</div>
+        <div class="tl-body">
+          <div class="tl-who">Buyer</div>
+          <div class="tl-title">Confirms receipt, funds release</div>
+          <div class="tl-desc">Buyer clicks "Item Received" and funds transfer to the seller instantly. If there's a problem, they raise a dispute — funds stay frozen while an admin reviews.</div>
+        </div>
+      </div>
+
+      <div style="background:white;border-radius:12px;padding:16px 18px;box-shadow:0 1px 6px rgba(0,0,0,0.05);margin-top:4px;">
+        <div style="font-size:12px;font-weight:700;color:#374151;margin-bottom:10px;">🔒 What protects you</div>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <div style="display:flex;gap:8px;font-size:12px;color:#475569;">
+            <span style="color:#0f766e;font-weight:700;flex-shrink:0;">✓</span>
+            <span>Funds are held in escrow — the seller can't access them until you confirm delivery</span>
+          </div>
+          <div style="display:flex;gap:8px;font-size:12px;color:#475569;">
+            <span style="color:#0f766e;font-weight:700;flex-shrink:0;">✓</span>
+            <span>Courier tracking is verified independently — seller can't fake a delivery</span>
+          </div>
+          <div style="display:flex;gap:8px;font-size:12px;color:#475569;">
+            <span style="color:#0f766e;font-weight:700;flex-shrink:0;">✓</span>
+            <span>Dispute resolution — an admin can refund you if the item isn't as described</span>
+          </div>
+          <div style="display:flex;gap:8px;font-size:12px;color:#475569;">
+            <span style="color:#0f766e;font-weight:700;flex-shrink:0;">✓</span>
+            <span>48-hour auto-release — funds release automatically if buyer goes silent after delivery</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Trustmarks -->
+  <div class="trustmarks">
+    <div class="tm"><span class="tm-icon">🔒</span> Stripe-secured payments</div>
+    <div class="tm"><span class="tm-icon">🚚</span> Live courier tracking</div>
+    <div class="tm"><span class="tm-icon">🇳🇿</span> NZD, NZ couriers</div>
+    <div class="tm"><span class="tm-icon">⚖️</span> Dispute resolution</div>
+    <div class="tm"><span class="tm-icon">0️⃣</span> No account needed to pay</div>
+  </div>
+</div>
+
+<script>
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function updateFee() {
+  const raw = parseFloat(document.getElementById('amount').value) || 0;
+  const amount = Math.min(Math.max(raw, 0), 2500);
+  const fee = amount > 0 ? Math.max(amount * 0.04, 5) : 5;
+  const total = amount > 0 ? amount + fee : 5;
+  document.getElementById('feeItem').textContent = amount > 0 ? `$${amount.toFixed(2)}` : '$0.00';
+  document.getElementById('feeFee').textContent = `$${fee.toFixed(2)}`;
+  document.getElementById('feeTotal').textContent = amount > 0 ? `$${total.toFixed(2)}` : '—';
+}
+
+function onInput() {
+  // clear errors as user types
+  ['titleErr','amountErr','sellerErr','buyerErr'].forEach(id => {
+    document.getElementById(id).style.display = 'none';
+  });
+}
+
+function validate() {
+  let ok = true;
+  const title = document.getElementById('title').value.trim();
+  const amount = parseFloat(document.getElementById('amount').value);
+  const seller = document.getElementById('sellerEmail').value.trim();
+  const buyer = document.getElementById('buyerEmail').value.trim();
+
+  if (!title || title.length < 3) {
+    document.getElementById('titleErr').style.display = 'block';
+    document.getElementById('title').classList.add('error');
+    ok = false;
+  }
+  if (!amount || amount < 1 || amount > 2500) {
+    document.getElementById('amountErr').style.display = 'block';
+    document.getElementById('amount').classList.add('error');
+    ok = false;
+  }
+  if (!EMAIL_RE.test(seller)) {
+    document.getElementById('sellerErr').style.display = 'block';
+    document.getElementById('sellerEmail').classList.add('error');
+    ok = false;
+  }
+  if (!EMAIL_RE.test(buyer)) {
+    document.getElementById('buyerErr').style.display = 'block';
+    document.getElementById('buyerEmail').classList.add('error');
+    ok = false;
+  }
+  if (ok && seller.toLowerCase() === buyer.toLowerCase()) {
+    document.getElementById('buyerErr').textContent = 'Buyer and seller cannot be the same';
+    document.getElementById('buyerErr').style.display = 'block';
+    ok = false;
+  }
+  return ok;
+}
+
+let timelineInterval;
+
+function submitDemo() {
+  if (!validate()) return;
+
+  const title   = document.getElementById('title').value.trim();
+  const amount  = parseFloat(document.getElementById('amount').value);
+  const desc    = document.getElementById('description').value.trim();
+  const seller  = document.getElementById('sellerEmail').value.trim();
+  const buyer   = document.getElementById('buyerEmail').value.trim();
+  const fee     = Math.max(amount * 0.04, 5);
+  const total   = amount + fee;
+  const dealId  = 'DEMO-' + Math.random().toString(36).slice(2,8).toUpperCase();
+
+  const btn = document.getElementById('submitBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span>⏳</span> Creating deal…';
+
+  // Animate timeline
+  let step = 0;
+  document.getElementById('tl0').classList.add('done');
+  document.getElementById('tl0').classList.remove('active');
+  document.getElementById('tl1').classList.add('active');
+  step = 1;
+
+  setTimeout(() => {
+    // Populate preview
+    document.getElementById('previewTitle').textContent  = title;
+    document.getElementById('previewAmount').textContent = `$${amount.toFixed(2)} NZD`;
+    document.getElementById('previewFee').textContent    = `$${fee.toFixed(2)} NZD`;
+    document.getElementById('previewTotal').textContent  = `$${total.toFixed(2)} NZD`;
+    document.getElementById('previewSeller').textContent = seller;
+    document.getElementById('previewBuyer').textContent  = buyer;
+    document.getElementById('previewId').textContent     = dealId;
+
+    // Email preview
+    const sellerName = seller.split('@')[0];
+    document.getElementById('emailTo').textContent      = buyer;
+    document.getElementById('emailSubject').textContent = `${sellerName} wants to sell you ${title} — review & pay $${total.toFixed(2)} NZD`;
+    document.getElementById('emailSellerName').textContent = sellerName;
+    document.getElementById('emailItem').textContent    = title;
+    document.getElementById('emailDesc').textContent    = desc || 'No description provided.';
+    document.getElementById('emailTotal').textContent   = `$${total.toFixed(2)} NZD`;
+
+    // Show result
+    document.getElementById('formCard').style.display = 'none';
+    document.getElementById('dealPreview').style.display = 'block';
+
+    btn.disabled = false;
+    btn.innerHTML = '<span>🔒</span> Create Deal & Email Buyer';
+  }, 900);
+}
+
+function resetDemo() {
+  document.getElementById('formCard').style.display = 'block';
+  document.getElementById('dealPreview').style.display = 'none';
+  document.getElementById('title').value = '';
+  document.getElementById('description').value = '';
+  document.getElementById('amount').value = '';
+  document.getElementById('sellerEmail').value = '';
+  document.getElementById('buyerEmail').value = '';
+  document.getElementById('title').classList.remove('error');
+  document.getElementById('amount').classList.remove('error');
+  document.getElementById('sellerEmail').classList.remove('error');
+  document.getElementById('buyerEmail').classList.remove('error');
+  updateFee();
+  // Reset timeline
+  ['tl0','tl1','tl2','tl3','tl4'].forEach((id, i) => {
+    const el = document.getElementById(id);
+    el.classList.remove('active','done');
+    if (i === 0) el.classList.add('active');
+  });
+}
+
+updateFee();
+</script>
+</body>
+</html>

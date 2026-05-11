@@ -1,0 +1,1155 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: SafeSend marketplace escrow API
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: deals
+    description: Escrow deal operations
+  - name: tracking
+    description: Shipment tracking
+  - name: disputes
+    description: Dispute management
+  - name: admin
+    description: Admin operations
+  - name: sellers
+    description: Seller onboarding
+  - name: auth
+    description: Magic-link authentication
+  - name: webhooks
+    description: Inbound webhook endpoints
+
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /deals:
+    post:
+      operationId: createDeal
+      tags: [deals]
+      summary: Create a new escrow deal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDealBody"
+      responses:
+        "201":
+          description: Deal created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Deal"
+    get:
+      operationId: listDeals
+      tags: [deals]
+      summary: List deals for the authenticated user (session-scoped — no email param)
+      parameters:
+        - name: role
+          in: query
+          schema:
+            type: string
+            enum: [buyer, seller, any]
+            default: any
+      responses:
+        "200":
+          description: List of deals
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Deal"
+
+  /deals/{dealId}:
+    get:
+      operationId: getDeal
+      tags: [deals]
+      summary: Get a deal by ID
+      parameters:
+        - name: dealId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Deal"
+        "404":
+          description: Not found
+
+  /deals/{dealId}/messages:
+    get:
+      operationId: getDealMessages
+      tags: [deals]
+      summary: List all messages in a deal thread
+      parameters:
+        - name: dealId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DealMessage"
+        "403":
+          description: Not a deal participant
+        "404":
+          description: Deal not found
+    post:
+      operationId: sendDealMessage
+      tags: [deals]
+      summary: Send a message in a deal thread
+      parameters:
+        - name: dealId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendMessageBody"
+      responses:
+        "201":
+          description: Message sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DealMessage"
+        "400":
+          description: Validation error
+        "403":
+          description: Not a deal participant
+        "404":
+          description: Deal not found
+
+  /deals/{dealId}/confirm-payment:
+    post:
+      operationId: confirmPayment
+      tags: [deals]
+      summary: Buyer confirms payment intent (creates Stripe PaymentIntent)
+      parameters:
+        - name: dealId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfirmPaymentBody"
+      responses:
+        "200":
+          description: Payment intent created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentIntentResult"
+
+  /deals/{dealId}/mark-shipped:
+    post:
+      operationId: markShipped
+      tags: [deals]
+      summary: Seller marks item as shipped with tracking number
+      parameters:
+        - name: dealId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarkShippedBody"
+      responses:
+        "200":
+          description: Updated deal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Deal"
+
+  /deals/{dealId}/release-funds:
+    post:
+      operationId: releaseFunds
+      tags: [deals]
+      summary: Buyer confirms receipt and releases funds to seller
+      parameters:
+        - name: dealId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReleaseFundsBody"
+      responses:
+        "200":
+          description: Funds released
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Deal"
+
+  /deals/{dealId}/dispute:
+    post:
+      operationId: raiseDispute
+      tags: [disputes]
+      summary: Raise a dispute on a deal
+      parameters:
+        - name: dealId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RaiseDisputeBody"
+      responses:
+        "200":
+          description: Dispute raised
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Deal"
+
+  /deals/{dealId}/tracking:
+    get:
+      operationId: getTracking
+      tags: [tracking]
+      summary: Get shipment tracking events for a deal
+      parameters:
+        - name: dealId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Tracking events
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrackingResult"
+
+  /deals/{dealId}/tracking-public:
+    get:
+      operationId: getPublicTracking
+      tags: [tracking]
+      summary: Public shipment tracking — no auth required, returns safe subset only
+      parameters:
+        - name: dealId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Public tracking info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicTrackingResult"
+        "404":
+          description: Deal not found
+
+  /deals/{dealId}/accept:
+    post:
+      operationId: acceptDeal
+      tags: [deals]
+      summary: Seller accepts deal terms (pending_seller_acceptance → created)
+      parameters:
+        - name: dealId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deal accepted and ready for payment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Deal"
+        "400":
+          description: Deal is not in pending_seller_acceptance state
+        "403":
+          description: Only the seller can accept a deal
+
+  /deals/{dealId}/confirm-as-buyer:
+    post:
+      operationId: confirmAsBuyer
+      tags: [deals]
+      summary: Buyer confirms a seller-created deal (pending_buyer_confirmation → created)
+      parameters:
+        - name: dealId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deal confirmed and ready for payment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Deal"
+        "400":
+          description: Deal is not in pending_buyer_confirmation state
+        "403":
+          description: Only the buyer can confirm this deal
+
+  /deals/{dealId}/cancel:
+    post:
+      operationId: cancelDeal
+      tags: [deals]
+      summary: Cancel a deal (only in created/funded states)
+      parameters:
+        - name: dealId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CancelDealBody"
+      responses:
+        "200":
+          description: Deal cancelled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Deal"
+
+  /seller/onboard:
+    post:
+      operationId: onboardSeller
+      tags: [sellers]
+      summary: Start Stripe Connect Express onboarding for a seller
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OnboardSellerBody"
+      responses:
+        "200":
+          description: Onboarding URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnboardingResult"
+
+  /seller/status:
+    get:
+      operationId: getSellerStatus
+      tags: [sellers]
+      summary: Check seller Stripe Connect status
+      parameters:
+        - name: email
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Seller status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SellerStatus"
+
+  /admin/deals:
+    get:
+      operationId: adminListDeals
+      tags: [admin]
+      summary: Admin view of all deals with filters
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: disputed
+          in: query
+          schema:
+            type: boolean
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Paginated deals
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminDealsResult"
+
+  /admin/deals/{dealId}/resolve-dispute:
+    post:
+      operationId: resolveDispute
+      tags: [admin]
+      summary: Admin resolves a dispute (refund buyer or release to seller)
+      parameters:
+        - name: dealId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResolveDisputeBody"
+      responses:
+        "200":
+          description: Dispute resolved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Deal"
+
+  /admin/stats:
+    get:
+      operationId: getAdminStats
+      tags: [admin]
+      summary: Admin dashboard stats (total volume, deal counts by state, fee revenue)
+      responses:
+        "200":
+          description: Admin stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminStats"
+
+  /webhooks/aftership:
+    post:
+      operationId: aftershipWebhook
+      tags: [webhooks]
+      summary: AfterShip tracking webhook (HMAC validated)
+      responses:
+        "200":
+          description: Acknowledged
+
+  /webhooks/trackingmore:
+    post:
+      operationId: trackingmoreWebhook
+      tags: [webhooks]
+      summary: TrackingMore tracking webhook (HMAC validated)
+      responses:
+        "200":
+          description: Acknowledged
+
+  /webhooks/stripe:
+    post:
+      operationId: stripeWebhook
+      tags: [webhooks]
+      summary: Stripe payment webhook
+      responses:
+        "200":
+          description: Acknowledged
+
+  /auth/request-link:
+    post:
+      operationId: requestLoginLink
+      tags: [auth]
+      summary: Send a magic sign-in link to an email address
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RequestLoginLinkBody"
+      responses:
+        "200":
+          description: Link sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RequestLoginLinkResponse"
+        "400":
+          description: Invalid email
+        "500":
+          description: Email delivery failed
+
+  /auth/verify:
+    post:
+      operationId: verifyLoginLink
+      tags: [auth]
+      summary: Verify a magic-link token and create a session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VerifyTokenBody"
+      responses:
+        "200":
+          description: Signed in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthMeResponse"
+        "400":
+          description: Invalid or expired token
+
+  /auth/me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      summary: Return the currently authenticated user
+      responses:
+        "200":
+          description: Authenticated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthMeResponse"
+        "401":
+          description: Not authenticated
+
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Destroy the current session
+      responses:
+        "200":
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+
+    DealState:
+      type: string
+      enum:
+        - pending_seller_acceptance
+        - pending_buyer_confirmation
+        - created
+        - funded
+        - shipped
+        - delivered
+        - complete
+        - disputed
+        - cancelled
+        - refunded
+
+    Deal:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        amountNzd:
+          type: number
+          description: Item price in NZD (excluding fee)
+        feeNzd:
+          type: number
+          description: Platform fee in NZD (4% with $5 min)
+        kycFeeNzd:
+          type: number
+          description: Identity verification fee in NZD ($2.50 for deals >= $500 NZD, else 0)
+        totalNzd:
+          type: number
+          description: Total charged to buyer (amountNzd + feeNzd + kycFeeNzd)
+        state:
+          $ref: "#/components/schemas/DealState"
+        buyerEmail:
+          type: string
+        sellerEmail:
+          type: string
+        trackingNumber:
+          type: string
+          nullable: true
+        courierSlug:
+          type: string
+          nullable: true
+        disputeReason:
+          type: string
+          nullable: true
+        stripePaymentIntentId:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        fundedAt:
+          type: string
+          format: date-time
+          nullable: true
+        shippedAt:
+          type: string
+          format: date-time
+          nullable: true
+        deliveredAt:
+          type: string
+          format: date-time
+          nullable: true
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        version:
+          type: integer
+          description: Optimistic concurrency version
+        signatureRequired:
+          type: boolean
+          description: Whether a courier signature is required at delivery
+        stripeTransferId:
+          type: string
+          nullable: true
+          description: Stripe transfer ID when funds were released to seller (for reconciliation)
+        stripeRefundId:
+          type: string
+          nullable: true
+          description: Stripe refund ID when a refund was issued to buyer (for reconciliation)
+        stripeTransferError:
+          type: string
+          nullable: true
+          description: Last Stripe transfer error message, if any
+        shipmentVerificationStatus:
+          type: string
+          enum: [pending, verified, flagged]
+          description: TrackingMore courier scan status after mark-shipped
+        buyerPhone:
+          type: string
+          nullable: true
+          description: Buyer mobile for SMS alerts only — never exposed to seller
+        sellerPhone:
+          type: string
+          nullable: true
+          description: Seller mobile for SMS alerts only — never exposed to buyer
+        itemUrl:
+          type: string
+          nullable: true
+          description: Original marketplace listing URL for product identification
+        referenceNumber:
+          type: string
+          nullable: true
+          description: Purchase order or external reference number
+        invoiceNumber:
+          type: string
+          nullable: true
+          description: "Auto-generated contract/invoice number for dispute callbacks. Format: SS-XXXXXXX"
+        creatorRole:
+          type: string
+          enum: [buyer, seller]
+          nullable: true
+          description: Whether the deal was created by the buyer or the seller
+      required:
+        - id
+        - title
+        - description
+        - amountNzd
+        - feeNzd
+        - kycFeeNzd
+        - totalNzd
+        - state
+        - buyerEmail
+        - sellerEmail
+        - createdAt
+        - updatedAt
+
+    CreateDealBody:
+      type: object
+      properties:
+        title:
+          type: string
+          description: Item title (pre-filled from URL if provided)
+        description:
+          type: string
+        amountNzd:
+          type: number
+          minimum: 1
+          description: Item price in NZD. Maximum $2,500 NZD enforced server-side (larger deals → Escrow.com).
+        buyerEmail:
+          type: string
+          format: email
+        sellerEmail:
+          type: string
+          format: email
+        buyerPhone:
+          type: string
+          nullable: true
+          description: Buyer mobile number for SMS alerts. Never shared with seller.
+        sellerPhone:
+          type: string
+          nullable: true
+          description: Seller mobile number for SMS alerts. Never shared with buyer.
+        itemUrl:
+          type: string
+          nullable: true
+          description: Original marketplace listing URL (Facebook, Trade Me, etc.) for product identification.
+        referenceNumber:
+          type: string
+          nullable: true
+          description: Purchase order or external reference number for multi-tracking scenarios.
+        creatorRole:
+          type: string
+          enum: [buyer, seller]
+          description: Whether the person creating the deal is the buyer or the seller. Controls initial deal state.
+      required:
+        - title
+        - description
+        - amountNzd
+        - buyerEmail
+        - sellerEmail
+        - creatorRole
+
+    ConfirmPaymentBody:
+      type: object
+      properties:
+        buyerEmail:
+          type: string
+          format: email
+      required:
+        - buyerEmail
+
+    PaymentIntentResult:
+      type: object
+      properties:
+        clientSecret:
+          type: string
+        paymentIntentId:
+          type: string
+        totalNzd:
+          type: number
+      required:
+        - clientSecret
+        - paymentIntentId
+        - totalNzd
+
+    MarkShippedBody:
+      type: object
+      properties:
+        sellerEmail:
+          type: string
+          format: email
+        trackingNumber:
+          type: string
+        courierSlug:
+          type: string
+          description: AfterShip courier slug (e.g. nz-post, courier-post, aramex)
+        signatureRequired:
+          type: boolean
+          description: Whether a courier signature is required at delivery (default true)
+      required:
+        - sellerEmail
+        - trackingNumber
+        - courierSlug
+
+    ReleaseFundsBody:
+      type: object
+      properties:
+        buyerEmail:
+          type: string
+          format: email
+      required:
+        - buyerEmail
+
+    RaiseDisputeBody:
+      type: object
+      properties:
+        raisedByEmail:
+          type: string
+          format: email
+        reason:
+          type: string
+          minLength: 10
+      required:
+        - raisedByEmail
+        - reason
+
+    CancelDealBody:
+      type: object
+      properties:
+        requestedByEmail:
+          type: string
+          format: email
+        reason:
+          type: string
+      required:
+        - requestedByEmail
+
+    TrackingEvent:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        message:
+          type: string
+        location:
+          type: string
+          nullable: true
+        status:
+          type: string
+      required:
+        - timestamp
+        - message
+        - status
+
+    TrackingResult:
+      type: object
+      properties:
+        trackingNumber:
+          type: string
+          nullable: true
+        courierSlug:
+          type: string
+          nullable: true
+        currentStatus:
+          type: string
+          nullable: true
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrackingEvent"
+      required:
+        - events
+
+    PublicTrackingResult:
+      type: object
+      description: Safe public subset of deal + tracking data — no financial or contact info
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        state:
+          $ref: "#/components/schemas/DealState"
+        trackingNumber:
+          type: string
+          nullable: true
+        courierSlug:
+          type: string
+          nullable: true
+        signatureRequired:
+          type: boolean
+        shipmentVerificationStatus:
+          type: string
+          enum: [pending, verified, flagged]
+        deliveredAt:
+          type: string
+          format: date-time
+          nullable: true
+        shippedAt:
+          type: string
+          format: date-time
+          nullable: true
+        buyerEmailMasked:
+          type: string
+          nullable: true
+          description: Partially masked buyer email for isBuyer check (e.g. j***@example.com)
+        referenceNumber:
+          type: string
+          nullable: true
+        itemUrl:
+          type: string
+          nullable: true
+        currentStatus:
+          type: string
+          nullable: true
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrackingEvent"
+      required:
+        - id
+        - title
+        - state
+        - signatureRequired
+        - shipmentVerificationStatus
+        - events
+
+    OnboardSellerBody:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        returnUrl:
+          type: string
+        refreshUrl:
+          type: string
+      required:
+        - email
+        - returnUrl
+        - refreshUrl
+
+    OnboardingResult:
+      type: object
+      properties:
+        url:
+          type: string
+        accountId:
+          type: string
+      required:
+        - url
+        - accountId
+
+    SellerStatus:
+      type: object
+      properties:
+        email:
+          type: string
+        stripeAccountId:
+          type: string
+          nullable: true
+        chargesEnabled:
+          type: boolean
+        payoutsEnabled:
+          type: boolean
+        onboardingComplete:
+          type: boolean
+      required:
+        - email
+        - chargesEnabled
+        - payoutsEnabled
+        - onboardingComplete
+
+    AdminDealsResult:
+      type: object
+      properties:
+        deals:
+          type: array
+          items:
+            $ref: "#/components/schemas/Deal"
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+      required:
+        - deals
+        - total
+        - page
+        - limit
+
+    ResolveDisputeBody:
+      type: object
+      properties:
+        resolution:
+          type: string
+          enum: [refund_buyer, release_to_seller]
+        adminNote:
+          type: string
+      required:
+        - resolution
+
+    AdminStats:
+      type: object
+      properties:
+        totalDeals:
+          type: integer
+        activeDeals:
+          type: integer
+        completedDeals:
+          type: integer
+        disputedDeals:
+          type: integer
+        cancelledDeals:
+          type: integer
+        totalVolumeNzd:
+          type: number
+        totalFeeRevenueNzd:
+          type: number
+        dealsByState:
+          type: object
+          additionalProperties:
+            type: integer
+      required:
+        - totalDeals
+        - activeDeals
+        - completedDeals
+        - disputedDeals
+        - cancelledDeals
+        - totalVolumeNzd
+        - totalFeeRevenueNzd
+        - dealsByState
+
+    StateTransition:
+      type: object
+      properties:
+        id:
+          type: integer
+        dealId:
+          type: string
+        fromState:
+          type: string
+          nullable: true
+        toState:
+          type: string
+        triggeredBy:
+          type: string
+        note:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - dealId
+        - toState
+        - triggeredBy
+        - createdAt
+
+    RequestLoginLinkBody:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        returnPath:
+          type: string
+      required:
+        - email
+
+    VerifyTokenBody:
+      type: object
+      properties:
+        token:
+          type: string
+      required:
+        - token
+
+    AuthMeResponse:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        verifiedAt:
+          type: string
+          format: date-time
+          description: When this email was first verified via magic link on SafeSend
+      required:
+        - email
+        - verifiedAt
+
+    RequestLoginLinkResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+        devLink:
+          type: string
+          description: Only present in development when RESEND_API_KEY is not set. The magic link URL for testing without an email client.
+      required:
+        - message
+
+    MessageResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+      required:
+        - message
+
+    DealMessage:
+      type: object
+      properties:
+        id:
+          type: string
+        dealId:
+          type: string
+        senderEmail:
+          type: string
+        content:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - dealId
+        - senderEmail
+        - content
+        - createdAt
+
+    SendMessageBody:
+      type: object
+      properties:
+        senderEmail:
+          type: string
+          format: email
+        content:
+          type: string
+          minLength: 1
+          maxLength: 2000
+      required:
+        - senderEmail
+        - content

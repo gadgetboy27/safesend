@@ -1,0 +1,70 @@
+Right — TokenVault is wrong for this too, for the opposite reason SplitNZ is wrong. Let me unpack and lock in the actual home.
+
+## Why TokenVault is wrong
+
+TokenVault is blockchain-native — Polygon Amoy, ERC-721/1155, MemoPhrase seed phrases, IPFS provenance. Its target user already understands wallets and gas. They're tokenising high-value assets where the chain *is* the point.
+
+The marketplace escrow user is the opposite: someone selling a $400 guitar on Facebook Marketplace who wants to know they'll get paid. They don't have a wallet, don't want one, won't tolerate a MetaMask-equivalent onboarding to receive $400. Forcing them through TokenVault loses the deal.
+
+The unit economics break too. TokenVault makes sense at $2k+ asset values where on-chain costs are amortised. Marketplace escrow needs to work cleanly at $50–$2,000, which is the meaty middle of NZ secondhand commerce. Different cost structure entirely.
+
+## The right home: a third product
+
+This wants its own brand and codebase. Working name doesn't matter yet (ParcelHold, SafeSend, Vouch — pick later) — what matters is clean separation. You'll share *learnings* across TokenVault, SplitNZ, and this (Stripe wiring, NZ KYC patterns, audit logging conventions), but not codebases.
+
+The market gap is real. NZ has Trade Me Pay Now (only on Trade Me, useless off-platform), PayPal Goods & Services (weak NZ adoption, buyer-skewed disputes), and Escrow.com (overkill for under $5k, US-flavoured UX). Facebook Marketplace, Instagram resellers, Discord trade communities, Gumtree-style locals — none have a credible NZ-native option. That's a wedge.
+
+## What "toned down" actually means
+
+Strip these from the previous architecture:
+
+- **NZD only.** No multi-currency, v2 if ever
+- **Cards-only funding.** No Akahu at MVP — card fees hurt but it ships in weeks instead of months
+- **Single recipient.** Skip multi-split entirely; that's a SplitNZ feature or a v2
+- **$2,500 NZD per-deal cap at launch.** Bigger deals: politely refuse, deep-link to Escrow.com. The cap keeps you in standard CDD territory rather than enhanced, and limits dispute blast radius while you're learning
+- **Manual dispute review.** No automated arbitration logic. A simple admin console where you triage the 3-5% of deals that go sideways. Scales fine to thousands of transactions
+- **PWA, not native apps.** App Store review delays don't help an MVP
+- **AfterShip-only for delivery.** No per-courier integrations — they already normalise NZ Post, CourierPost, Aramex NZ, NZ Couriers
+- **Email + SMS via Resend/Twilio.** No push notifications until install warrants it
+
+What you keep from last turn's design — these don't simplify because they *are* the product:
+
+- The state machine
+- Stripe Connect Express onboarding (mandatory for seller KYC)
+- AfterShip webhook integration with HMAC validation
+- Signature-required service *enforced at tracking entry* — this is the fraud-prevention core, not optional
+- The `state_transitions` audit trail
+
+## The compliance lever
+
+Staying entirely on Stripe Connect rails for MVP — no custom pooled trust account, no Akahu funding leg — gives you a dramatically lighter regulatory posture. You're a tech platform facilitating Stripe-issued payments, not a money services business holding customer funds in your own pool. Stripe is the licensed party on those rails.
+
+This isn't zero-burden — you still want FSP registration once you're clearly "in the business" of providing this, plus DRS membership and a basic AML program (Stripe's seller KYC alone isn't enough under NZ rules to cover your platform obligations). But it's a fraction of the work of running your own trust account. The architectural choice is your biggest compliance lever and it's free to get right at design time. Lawyer it up before first live transaction.
+
+## Reuse SplitNZ as the scaffold
+
+Forking SplitNZ saves maybe 1-2 weeks of setup. You keep:
+
+- Vite + Express + Drizzle + Neon stack, all configured
+- shadcn/Radix component library, already styled and themed
+- Mobile-first layout primitives and the design tokens in `tailwind.config.ts`
+- PIN/biometric auth pattern — genuinely useful for confirming high-value release and refund actions
+- `package.json` with Stripe SDKs already installed
+
+You replace wholesale: schema, routes, pages, and the `MemStorage`-to-real-Postgres migration that's still owed in SplitNZ either way. Roughly 60-70% new code. I'd actually lean greenfield and copy over just `package.json` + tailwind config + the shadcn install — it forces clean thinking and avoids dragging the half-mocked bill-split DNA into something that's about strangers transacting. But forking is defensible if you want pace.
+
+## Pricing sketch
+
+Stripe takes ~2.9% + 30¢ inbound on NZD cards plus ~0.25% + ~$2 on the Connect transfer out. To make money:
+
+- Charge buyer 4% with a $5 minimum. Buyers ask for protection, so they tolerate it
+- Or charge seller 3% if positioned as "list with protection" — but sellers resist fees more than buyers, so this segment is harder
+- Below $30 transactions, you'll lose money on Stripe fees alone — either set a floor or accept it as marketing cost while building reviews
+
+Established convention is buyer-pays. NZ market read: 4% buyer-pays with $5 floor probably lands well.
+
+## Concrete next step
+
+Before any code: write a one-page product brief covering (a) target user — pick *one* of {Trade Me off-platform, Facebook Marketplace, Instagram resellers} and design the MVP around them, (b) the transaction cap and why, (c) the fee structure, (d) the dispute SLA you're committing to. This is the document that focuses the build, and it's the same document you hand the lawyer for the FSP/AML conversation. Two birds.
+
+Then build is the architecture from last turn with the cuts above. ~6-8 weeks to a credible private beta with real money on real parcels — and Replit Agents can carry meaningfully more of that load than they could on the full-fat version, because the cuts remove most of the genuinely hard correctness work (multi-split allocation, multi-funding-source reconciliation, automated dispute arbitration). State machine + webhooks + timers still need a careful human pass, but the surface area shrinks materially.

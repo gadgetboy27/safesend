@@ -1,0 +1,462 @@
+# SafeSend — Pre-Production Audit Report
+**Date:** 10 May 2026  
+**Codebase:** escrowformarket.zip (latest)  
+**Auditor standard:** Senior engineer, production finance application  
+**Checklist cross-referenced:** SafeSend Pre-Production Readiness Checklist (provided)
+
+---
+
+## Executive Verdict
+
+This is the most production-ready version of SafeSend to date. The architecture is sound, the test suite is meaningful (184 tests across security, integration, concurrency, and unit layers), the state machine is correctly implemented, webhook HMAC is mandatory and tested, CSRF protection is in place, and all five background jobs exist with correct deadlines.
+
+**However, there are three blockers that make this not yet shippable with real money:**
+
+1. The Stripe integration is hardwired to test keys and will silently fail to process real payments
+2. A $2.50 KYC fee is charged to buyers on deals ≥$500 but no KYC is performed — buyers pay for nothing
+3. Five state-mutation routes have a client-email fallback that is safe today but structurally fragile
+
+Everything else is fixable in one focused agent session before launch.
+
+---
+
+## 🔴 BLOCKERS — Must fix before any real money
+
+---
+
+### B1. Stripe is hardcoded to test keys — live payments are impossible
+
+**File:** `artifacts/api-server/src/lib/stripe.ts` lines 3–7
+
+```ts
+if (!process.env.STRIPE_TEST_SECRET_KEY) {
+  throw new Error("STRIPE_TEST_SECRET_KEY is required");
+}
+export const stripe = new Stripe(process.env.STRIPE_TEST_SECRET_KEY, { ... });
+```
+
+The env var name is literally `STRIPE_TEST_SECRET_KEY`. There is no code path that reads a live key. Even if you set `STRIPE_SECRET_KEY=sk_live_...` in the production environment, it is completely ignored. The server would throw on startup with "STRIPE_TEST_SECRET_KEY is required".
+
+The checklist correctly identifies this but the fix is not just renaming an env var — the code itself must change.
+
+**Fix — replace stripe.ts entirely:**
+```ts
+// stripe.ts
+import Stripe from "stripe";
+
+const key = process.env.STRIPE_SECRET_KEY;
+if (!key) {
+  throw new Error("STRIPE_SECRET_KEY is required — use sk_live_... in production, sk_test_... in dev");
+}
+if (process.env.NODE_ENV === "production" && !key.startsWith("sk_live_")) {
+  throw new Error("STRIPE_SECRET_KEY must be a live key (sk_live_...) in production");
+}
+
+export const stripe = new Stripe(key, { apiVersion: "2026-04-22.dahlia" });
+```
+
+Then rename `STRIPE_TEST_SECRET_KEY` → `STRIPE_SECRET_KEY` in every env file, the checklist, and the README. Add `STRIPE_SECRET_KEY` to `checkStartupRequirements()` — currently it is NOT checked there, which means an empty key would only be caught at the throw in stripe.ts, after the startup checks pass.
+
+---
+
+### B2. KYC fee charged but KYC never performed — buyers pay $2.50 for nothing
+
+**Files:** `lib/deal-helpers.ts` lines 14–18, `artifacts/api-server/src/routes/auth.ts` lines 109–170
+
+`calculateFee()` adds `kycFeeNzd: 2.50` to every deal ≥$500 NZD. This fee is shown in the UI, included in the Stripe PaymentIntent total, collected from the buyer, and disclosed in the Terms of Service. But when you read `auth.ts`:
+
+```ts
+// ─────────────────────────────────────────────────────────────────────────
+// FUTURE: Stripe Identity KYC stub
+//
+// When you are ready to require identity verification at sign-up, insert the
+// following logic here...
+```
+
+The Stripe Identity flow is commented out entirely. The webhook to receive `identity.verification_session.verified` does not exist. There are no `stripeIdentitySessionId` or `stripeIdentityVerified` columns in the users table.
+
+**This means:**
+- A buyer pays $500 + $20 platform fee + $2.50 KYC fee = $522.50
+- The $2.50 is retained by SafeSend
+- No identity verification happens
+- The Terms say "All identity verification (KYC) and AML checks are handled securely by Stripe" — this is currently false
+
+This is both a consumer protection issue and a potential misrepresentation. Either implement the KYC flow or remove the fee and the Terms language before launch.
+
+**Fix options:**
+1. **Remove KYC fee entirely** — set `KYC_FEE_NZD = 0` and `KYC_THRESHOLD_NZD = Infinity` until the feature is ready. Update Terms section 4 accordingly.
+2. **Implement the KYC flow** — the stub in `auth.ts` is detailed and complete. It is approximately 4–6 hours of agent work. Do this only if you want to launch with KYC enabled.
+
+---
+
+### B3. Body-email fallback pattern is structurally dangerous
+
+**File:** `artifacts/api-server/src/routes/deals.ts` lines 375, 463, 553, 610, 673
+
+Five state-mutation routes determine the actor using this pattern:
+```ts
+const buyerActor = sessionEmail(req) ?? body.data.buyerEmail;
+```
+
+In production with `requireAuth` in place, `sessionEmail()` always returns the authenticated email and the `?? body.data.buyerEmail` branch is dead code. It is safe today.
+
+But it is one accidental `requireAuth` removal away from a full identity impersonation vulnerability — anyone could pass any email in the request body and act as that party. The pattern also makes the code actively misleading: a reader cannot tell from the route handler alone whether the actor is server-authoritative or client-supplied.
+
+**Fix — replace all five instances with a hard assertion:**
+```ts
+// confirm-payment
+const buyerActor = sessionEmail(req);
+if (!buyerActor) { res.status(401).json({ error: "Not authenticated" }); return; }
+if (deal.buyerEmail.toLowerCase() !== buyerActor.toLowerCase()) {
+  res.status(403).json({ error: "Only the buyer can confirm payment" }); return;
+}
+
+// mark-shipped
+const sellerActor = sessionEmail(req);
+if (!sellerActor) { res.status(401).json({ error: "Not authenticated" }); return; }
+if (deal.sellerEmail.toLowerCase() !== sellerActor.toLowerCase()) {
+  res.status(403).json({ error: "Only the seller can mark as shipped" }); return;
+}
+
+// etc.
+```
+
+The test suite's `X-Test-Email` header approach (in `sessionEmail()` under `TEST_BYPASS_AUTH=1`) already handles the test case — no body fallback needed.
+
+---
+
+## 🟠 HIGH — Fix before launch
+
+---
+
+### H1. Rate limiters use in-memory store — resets on every server restart
+
+**File:** `artifacts/api-server/src/middleware/rateLimiters.ts`
+
+`express-rate-limit` with no `store` option uses its default `MemoryStore`. On Replit, the server restarts frequently (deploys, crashes, idle timeouts). Every restart wipes all rate limit counters. An attacker doing a brute-force login sweep only needs to trigger a restart to reset the window.
+
+**Fix:**
+```bash
+pnpm add @express-rate-limit/postgresql
+```
+```ts
+import { PostgresStore } from "@express-rate-limit/postgresql";
+import { pool } from "@workspace/db"; // reuse the existing pg Pool
+
+const store = new PostgresStore({ pool });
+
+export const authRequestLinkLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 20,
+  store,
+  // ...
+});
+```
+
+The existing Postgres connection is already available — this is a two-line addition per limiter.
+
+---
+
+### H2. Minimum deal amount inconsistency — $5 in code, $20 in UI
+
+**File:** `lib/deal-helpers.ts` line 36
+
+```ts
+if (amountNzd < 5) return "Amount must be at least $5 NZD";
+```
+
+The previous audits recommended $20 as the minimum because Stripe's fee on a $5 deal (1.7% of ~$5.20 + $0.30 = ~$0.39) leaves a net margin of $4.61 - $0.39 = $4.22 for SafeSend — and the $5 minimum fee already caps the floor. But the frontend calculator shows `$20 minimum` while the backend allows $5. This inconsistency means a user can bypass the frontend validation via a direct API call and create a $5 deal.
+
+**Fix:** Change the server-side minimum to match whatever the frontend shows. If $5 is intentional, change the frontend. If $20 is intentional, update `deal-helpers.ts`:
+```ts
+if (amountNzd < 20) return "Amount must be at least $20 NZD";
+```
+
+---
+
+### H3. `autoCancelUnpaid` misses `pending_seller_acceptance` and `pending_buyer_confirmation` states
+
+**File:** `artifacts/api-server/src/jobs/verify-shipments.ts` lines 64–93
+
+`autoCancelUnpaid` only cancels deals in `created` state where `pay_by_deadline` has passed. But deals also start in `pending_seller_acceptance` (buyer created) or `pending_buyer_confirmation` (seller created). These pre-confirmation states have no expiry job. A seller who creates a deal and never responds, or a deal the buyer creates and the seller ignores, will sit in limbo forever.
+
+```ts
+// Current:
+eq(dealsTable.state, "created"),
+
+// Should be:
+inArray(dealsTable.state, [
+  "created",
+  "pending_seller_acceptance",
+  "pending_buyer_confirmation"
+]),
+```
+
+The `payByDeadline` column is already set at creation time (7 days from `createdAt`), so the query will work correctly once the state filter is broadened.
+
+---
+
+### H4. Public tracking endpoint fans out to TrackingMore on every page load
+
+**File:** `artifacts/api-server/src/routes/tracking.ts` lines 87–93
+
+```ts
+router.get("/deals/:dealId/tracking-public", async (req, res) => {
+  // ...
+  if (deal.trackingNumber && deal.courierSlug) {
+    await syncTrackingFromTrackingMore(deal.id, deal.trackingNumber, deal.courierSlug);
+  }
+```
+
+This is a public unauthenticated endpoint. Every page refresh, every bot scan, every social media link preview triggers a live API call to TrackingMore. TrackingMore charges per API call. A single viral tracking link could generate thousands of unbilled external API requests per hour.
+
+**Fix:** Rate-limit sync calls on this endpoint. Only sync if last sync was more than N minutes ago (add a `trackingLastSyncedAt` timestamp to the deal):
+```ts
+const MIN_SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const syncAge = deal.trackingLastSyncedAt
+  ? Date.now() - deal.trackingLastSyncedAt.getTime()
+  : Infinity;
+if (deal.trackingNumber && deal.courierSlug && syncAge > MIN_SYNC_INTERVAL_MS) {
+  await syncTrackingFromTrackingMore(...).catch(() => {});
+}
+```
+
+---
+
+### H5. Missing indexes on deadline columns used by hourly jobs
+
+**File:** `lib/db/src/schema/deals.ts`
+
+The five background jobs query on `payByDeadline`, `shipByDeadline`, `disputeResolveBy`, and `shippedAt` with no indexes on those columns. Currently irrelevant with a small dataset, but an hourly full table scan will become expensive at scale.
+
+The existing index array already shows the pattern — add to `deals.ts`:
+```ts
+index("idx_deals_pay_by_deadline").on(table.payByDeadline),
+index("idx_deals_ship_by_deadline").on(table.shipByDeadline),
+index("idx_deals_dispute_resolve_by").on(table.disputeResolveBy),
+index("idx_deals_shipped_at").on(table.shippedAt),
+```
+
+---
+
+## 🟡 MEDIUM — Fix within first week of launch
+
+---
+
+### M1. Terms say "Manual Capture" but code uses automatic capture
+
+**File:** `artifacts/safesend/src/pages/terms.tsx` — Escrow Agreement section 2
+
+The Terms of Service state: *"SafeSend uses the Stripe API to authorise and capture funds"* and *"SafeSend triggers the 'Capture' of funds."* This implies held authorisation with separate capture — the `capture_method: "manual"` Stripe pattern.
+
+The actual code uses `automatic_payment_methods: { enabled: true }` with no `capture_method` — meaning funds are captured immediately when the buyer pays. There is no deferred hold. This is not wrong for the product, but it contradicts the Terms. Update the Terms to say funds are *captured immediately at payment* and held by Stripe until the transfer condition is met.
+
+---
+
+### M2. Dispute email promises "2–3 business days" but code has a 14-day cap
+
+**File:** `artifacts/api-server/src/lib/email.ts` — `sendDisputeRaisedEmail`
+
+```
+"An admin will review evidence from both sides and contact you within 2–3 business days."
+```
+
+The dispute SLA code (`disputeResolveBy = now + 14 days`) is correct per the Terms. But the dispute email promises 2–3 business days. When the dispute runs to 14 days because it's complex, the buyer or seller will be justifiably angry — they were told 2–3 days. Either change the email copy to say "up to 14 calendar days", or implement an actual 2–3 business day alert to admin that triggers if no resolution has been issued.
+
+---
+
+### M3. `generateInvoiceNumber` uses `Math.random()` — not cryptographically secure
+
+**File:** `lib/deal-helpers.ts` lines 61–69
+
+Invoice numbers (format `SS-XXXXXXX`) use `Math.random()` for generation. This is fine for human readability but if invoice numbers are ever used for any security purpose (lookup tokens, dispute reference for callbacks, etc.), `Math.random()` is predictable. Replace with `crypto.randomBytes`:
+
+```ts
+import { randomBytes } from "crypto";
+
+export function generateInvoiceNumber(): string {
+  const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  const bytes = randomBytes(7);
+  return "SS-" + Array.from(bytes).map(b => chars[b % chars.length]).join("");
+}
+```
+
+Also: the current implementation has a uniqueness collision risk. If `invoiceNumber` clashes (31^7 ≈ 27B combinations — very low risk but possible), the `db.insert` will throw an unhandled DB error and deal creation will fail with a 500. Add a retry loop or handle the unique constraint violation.
+
+---
+
+### M4. `E2E_EMAIL_RECIPIENT` silently redirects ALL emails if set in production
+
+**File:** `artifacts/api-server/src/lib/email.ts` line 37
+
+```ts
+const recipient = process.env.E2E_EMAIL_RECIPIENT ?? to;
+```
+
+If this env var is set in production, every email — magic links, funded notifications, dispute alerts — goes to one inbox. Users would not receive their emails. The checklist flags this but it needs to be enforced programmatically, not just as a pre-launch reminder:
+
+```ts
+if (process.env.E2E_EMAIL_RECIPIENT && process.env.NODE_ENV === "production") {
+  throw new Error("E2E_EMAIL_RECIPIENT must not be set in production");
+}
+```
+
+Add this check to `checkStartupRequirements()`.
+
+---
+
+### M5. `autoReleaseDelivered` has a redundant and misleading filter
+
+**File:** `artifacts/api-server/src/jobs/verify-shipments.ts` lines 38–43
+
+```ts
+.where(
+  and(
+    eq(dealsTable.state, "delivered"),
+    ne(dealsTable.state, "disputed"),   // ← can never be both delivered AND disputed
+    lt(dealsTable.deliveredAt, cutoff),
+  ),
+)
+```
+
+The state machine prevents a deal from being simultaneously in `delivered` and `disputed` states. The `ne(dealsTable.state, "disputed")` filter is logically impossible to trigger — it could never match a row that is already filtered to `state = "delivered"`. Remove it to avoid confusion. Future readers will wonder if the state machine is broken or if the filter is intentional.
+
+---
+
+### M6. Seller onboard does not enforce that the authenticated user can only onboard themselves
+
+**File:** `artifacts/api-server/src/routes/sellers.ts` lines 24–25
+
+```ts
+const sessionE = sessionEmail(req);
+const email = sessionE ?? parsed.data.email;
+```
+
+In production, `sessionE` is always set (requireAuth), so `parsed.data.email` is ignored. Fine. But the route does not validate that `sessionE === parsed.data.email`. A logged-in user who knows another seller's email could attempt to pass it in the body — it would be ignored due to the `??` operator, but the intent validation is missing. Make the intent explicit:
+
+```ts
+const email = sessionEmail(req)!;
+// parsed.data.email is only used by the Stripe Connect return URL — not as the identity source
+```
+
+---
+
+### M7. `STRIPE_WEBHOOK_SECRET` is checked in `checkStartupRequirements` but `TRACKINGMORE_API_KEY` is not
+
+**File:** `artifacts/api-server/src/lib/startup-check.ts`
+
+The TrackingMore webhook fails closed (returns 500 if key is not set), which is correct. But the startup check doesn't warn about this. If the key is missing at deploy time, every TrackingMore webhook will return 500 and deals will never advance to `delivered` via webhook (only via the poll job, 2-hour delay). Add to startup-check:
+
+```ts
+if (!process.env.TRACKINGMORE_API_KEY) {
+  logger.warn("TRACKINGMORE_API_KEY not set — TrackingMore webhooks will be rejected; only polling will advance shipped deals");
+}
+```
+
+---
+
+## ✅ Checklist Items Verified as Done
+
+Going through the pre-production checklist against the actual code:
+
+| Item | Code Verdict |
+|---|---|
+| SESSION_SECRET validated and hard-exits | ✅ `checkStartupRequirements()` checks and throws |
+| SESSION_SECRET dev fallback detected | ✅ Literal string comparison blocks it |
+| sameSite: "strict" on session cookie | ✅ Confirmed in `app.ts` |
+| CSRF origin-check middleware | ✅ In `app.ts`, tested in `csrf.test.ts` |
+| CORS allowlist (not wildcard) | ✅ Correctly implemented with dev permissive fallback |
+| TEST_BYPASS_AUTH=1 blocked in production | ✅ Startup check throws |
+| Stripe webhook HMAC mandatory | ✅ Returns 400/500 if missing or wrong |
+| TrackingMore webhook HMAC mandatory | ✅ Fails closed when API key not set |
+| Stripe webhook idempotency | ✅ `idempotency_keys` table with unique constraint |
+| IDOR on deal reads | ✅ Participant check on every route |
+| IDOR on deal mutations | ✅ Role-specific checks on every mutation |
+| Admin routes — double-gated | ✅ `requireAuth` + `requireAdmin` on all admin routes |
+| Admin email env-var based (not guessable key) | ✅ `ADMIN_EMAILS` with runtime lookup |
+| Stripe webhook secret checked at startup | ✅ In `checkStartupRequirements()` |
+| ADMIN_EMAILS required in production | ✅ Startup check (production only) |
+| Optimistic concurrency on state transitions | ✅ Version column with UPDATE WHERE version = N |
+| All 5 background jobs present | ✅ All in `index.ts` with correct intervals |
+| Pay-by deadline (7 days) | ✅ Set at deal creation, `autoCancelUnpaid` job |
+| Ship-by deadline (5 biz days) | ✅ Set at funding webhook, `autoRefundUnshipped` job |
+| 48h delivery auto-release | ✅ `autoReleaseDelivered` job |
+| 14-day dispute hard cap | ✅ `autoRefundExpiredDispute` job |
+| TrackingMore polling backstop | ✅ `pollActiveShipments` every 2 hours |
+| Signature-required gate on delivery | ✅ Tested in `webhook-signatures.test.ts` |
+| Public tracking — no financial fields | ✅ Tested in `authorization.test.ts` |
+| Global error handler | ✅ Last middleware in `app.ts` |
+| SQL aggregations for admin stats | ✅ `GROUP BY state`, not `getAllDeals()` |
+| Structured JSON logging (Pino) | ✅ Confirmed throughout |
+| Email — HTML injection prevention | ✅ Dispute reason and message content HTML-escaped |
+| Deal message — sender verified against session | ✅ Checked in `POST /deals/:id/messages` |
+| Terms of Service — exists and linked | ✅ `/terms` page with full content |
+| Both parties consent recorded | ✅ `consentsTable` with IP and UA |
+
+---
+
+## 📋 Legal / Compliance Status (from checklist)
+
+These are not code items but must be resolved before launch:
+
+| Item | Status |
+|---|---|
+| FSP registration or confirmed exemption | ❓ Not visible in codebase |
+| DRS scheme membership | ❓ Not visible in codebase |
+| AML/CFT programme documented | ❓ Not visible in codebase — Terms say "Stripe handles KYC" but AML/CFT programme is an operator obligation separate from Stripe |
+| Privacy Policy published | ✅ `/privacy` page exists |
+| Terms of Service — solicitor reviewed | ⚠️ Terms are drafted but the checklist has this unchecked |
+| SPF/DKIM/DMARC on sender domain | ❓ DNS config — not verifiable from code |
+
+The AML/CFT point is worth calling out: Stripe KYC covers payment card identity, not the AML/CFT compliance programme obligations under the Financial Transactions Reporting Act 1996. SafeSend as an operator has independent obligations to document its own AML/CFT programme regardless of Stripe's verification. Confirm with your NZ solicitor whether the current model triggers these obligations.
+
+---
+
+## Priority Fix Order for Replit Agent
+
+```
+BLOCKERS (in order):
+1. B1 — Rename STRIPE_TEST_SECRET_KEY → STRIPE_SECRET_KEY; add live-key guard; 
+         add STRIPE_SECRET_KEY to checkStartupRequirements()
+2. B2 — Remove KYC fee: set KYC_FEE_NZD = 0, KYC_THRESHOLD_NZD = Infinity;
+         remove KYC language from Terms sections 3, 4 until feature is implemented
+3. B3 — Replace all 5 `sessionEmail(req) ?? body.data.email` fallbacks with hard assertions
+
+HIGH (same session):
+4. H1 — Add PostgreSQL backing store to all three rate limiters
+5. H2 — Align minimum deal amount: $20 in deal-helpers.ts to match UI
+6. H3 — Expand autoCancelUnpaid to cover pending_seller_acceptance + pending_buyer_confirmation
+7. H4 — Add TrackingMore sync throttle to public tracking endpoint
+8. H5 — Add 4 missing indexes on deadline columns to deals schema
+
+MEDIUM (before marketing goes live):
+9.  M1 — Fix Terms "Manual Capture" → correct language about immediate capture
+10. M2 — Fix dispute email copy: "2–3 days" → "up to 14 calendar days"
+11. M3 — Replace Math.random() in generateInvoiceNumber() with crypto.randomBytes()
+12. M4 — Add E2E_EMAIL_RECIPIENT production guard to checkStartupRequirements()
+13. M5 — Remove redundant ne(state, "disputed") filter in autoReleaseDelivered
+14. M7 — Add TRACKINGMORE_API_KEY warning to checkStartupRequirements()
+```
+
+---
+
+## Test Coverage Assessment
+
+The 184-test suite is well-structured and covers the right things:
+
+**Strong coverage:**
+- Authorization (401/403 on every protected route)
+- CSRF origin enforcement
+- Webhook HMAC (both Stripe and TrackingMore)
+- State machine transitions and guards
+- IDOR prevention on deal reads and mutations
+- Public tracking field filtering
+- Optimistic concurrency (version conflict test)
+
+**Gaps to add before launch:**
+- `autoCancelUnpaid` / `autoRefundUnshipped` / `autoRefundExpiredDispute` jobs have no integration tests — a job bug would only be caught in production
+- `generateInvoiceNumber` uniqueness collision handling is not tested
+- `sendDealFundedEmail` / `smsDealFunded` are called fire-and-forget — no test verifies the correct email goes to the seller (vs. buyer) after funding
+- Rate limiter behaviour (currently using in-memory — add test that 21st request returns 429)
+- `POST /deals/:dealId/confirm-as-buyer` and `POST /deals/:dealId/accept` have no security test verifying role enforcement (covered by the state machine test but not the auth test suite)
+```

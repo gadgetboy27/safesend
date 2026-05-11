@@ -1,0 +1,273 @@
+# SafeSend courier flow — implementation spec
+
+This document is the source of truth for the four-step courier flow
+build. Hand it to Replit Agent verbatim.
+
+---
+
+## Goal
+
+Make SafeSend's escrow flow autonomous and fraud-resistant by integrating
+TrackingMore as the single source of truth for shipment status, with the
+seller's typed tracking number as the input that triggers monitoring.
+
+The flow:
+
+1. Seller pastes tracking number → backend registers it with TrackingMore
+2. Within 48h, courier must scan the parcel — if not, deal is flagged
+3. While in transit, buyer sees live courier updates on a public tracking page
+4. Courier-confirmed signed delivery triggers the release window
+5. 48h after delivery with no dispute → funds auto-release to seller
+
+---
+
+## Step 1 — Register tracking with TrackingMore on mark-shipped
+
+**File:** `artifacts/api-server/src/routes/deals.ts`, inside the
+`POST /deals/:dealId/mark-shipped` handler.
+
+After the courier slug validation (line 272-276) and BEFORE the
+`transitionDeal` call:
+
+```ts
+// Register tracking with TrackingMore so they push us webhooks
+const tmCourierCode = mapToTrackingMoreCourierCode(body.data.courierSlug);
+if (process.env.TRACKINGMORE_API_KEY && tmCourierCode) {
+  try {
+    const resp = await fetch("https://api.trackingmore.com/v4/trackings", {
+      method: "POST",
+      headers: {
+        "Tracking-Api-Key": process.env.TRACKINGMORE_API_KEY,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        tracking_number: body.data.trackingNumber,
+        courier_code: tmCourierCode,
+        order_id: deal.id, // links events back to our deal
+      }),
+    });
+
+    if (!resp.ok && resp.status !== 409) {
+      // 409 = already registered, fine. Other errors warrant a warning.
+      const errText = await resp.text();
+      req.log.warn({ status: resp.status, errText }, "TrackingMore registration failed");
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Unknown";
+    req.log.warn({ err: msg }, "TrackingMore registration network error");
+    // Don't block the state transition. Buyer can pull on-demand.
+  }
+}
+```
+
+**New helper:** `artifacts/api-server/src/lib/courier-mapping.ts`
+
+```ts
+/**
+ * Maps SafeSend courier slugs to TrackingMore courier_code values.
+ * Returns null if the slug isn't supported by TrackingMore.
+ */
+const SLUG_TO_TM_CODE: Record<string, string> = {
+  nzpost: "nzpost",
+  courierpost: "courierpost-nz",
+  "nz-couriers": "nzc-courier",
+  aramex: "aramex-australia",
+  "post-haste": "post-haste",
+  // Add more as we whitelist more couriers
+};
+
+export function mapToTrackingMoreCourierCode(safesendSlug: string): string | null {
+  return SLUG_TO_TM_CODE[safesendSlug] ?? null;
+}
+```
+
+**Tests required** (`artifacts/api-server/test/integration/tracking-registration.test.ts`):
+
+- Mock `fetch` and verify a `POST /v4/trackings` call is made with
+  `tracking_number`, `courier_code`, `order_id` set correctly
+- A non-200 response from TrackingMore does NOT block the state transition
+  (deal still moves to `shipped`)
+- A network error does NOT block the state transition
+
+---
+
+## Step 2 — 48h shipment-verification check
+
+**New schema column** on `deals` table (`lib/db/src/schema/deals.ts`):
+
+```ts
+shipmentVerificationStatus: text("shipment_verification_status")
+  .notNull()
+  .default("pending"), // 'pending' | 'verified' | 'flagged'
+```
+
+When TrackingMore webhook arrives with ANY checkpoint and the deal is
+in `shipped` state with `shipmentVerificationStatus === 'pending'`, set
+it to `'verified'`. (Update `webhooks.ts` accordingly.)
+
+**New scheduled job** at `artifacts/api-server/src/jobs/verify-shipments.ts`:
+
+```ts
+import { db, dealsTable } from "@workspace/db";
+import { and, eq, lt } from "drizzle-orm";
+import { logger } from "../lib/logger";
+
+/**
+ * Runs every 6 hours. Flags deals where:
+ *   - state is 'shipped'
+ *   - verification status is 'pending'
+ *   - shippedAt was more than 48 hours ago
+ *
+ * Flagged deals show up in the admin console for review.
+ * The buyer is notified by email and can cancel.
+ */
+export async function verifyShipments(): Promise<void> {
+  const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000);
+
+  const stale = await db
+    .select()
+    .from(dealsTable)
+    .where(
+      and(
+        eq(dealsTable.state, "shipped"),
+        eq(dealsTable.shipmentVerificationStatus, "pending"),
+        lt(dealsTable.shippedAt, cutoff),
+      ),
+    );
+
+  for (const deal of stale) {
+    await db
+      .update(dealsTable)
+      .set({ shipmentVerificationStatus: "flagged" })
+      .where(eq(dealsTable.id, deal.id));
+
+    logger.warn({ dealId: deal.id }, "Deal flagged: 48h elapsed without courier scan");
+    // TODO: send email to buyer with cancel option
+  }
+}
+```
+
+Wire it up via Replit's scheduled-job feature, or a simple
+`setInterval(verifyShipments, 6 * 60 * 60 * 1000)` in `index.ts` if Replit
+keeps the process alive between requests.
+
+**Cancel rights update** in `routes/deals.ts`, the `POST /:id/cancel` handler:
+
+Currently the handler only allows cancel from `created` and `funded` states.
+Extend the rule:
+
+- `created` → buyer or seller can cancel (no payment yet)
+- `funded` → buyer or seller can cancel (refund issued)
+- `shipped` AND `shipmentVerificationStatus === 'flagged'` → **buyer can cancel** (refund issued)
+- `shipped` AND verification verified → cannot cancel (must dispute on delivery)
+- All other states → cannot cancel
+
+**Tests required:**
+
+- `verifyShipments` flags a 48h-old `shipped` deal with no checkpoints
+- Same job leaves verified deals alone
+- Buyer can cancel a flagged deal; receives refund
+- Buyer cannot cancel a verified `shipped` deal
+- Webhook arrival flips verification status from `pending` to `verified`
+
+---
+
+## Step 3 — Live tracking page (frontend)
+
+**File:** `artifacts/safesend/src/pages/track/tracking.tsx`
+
+While the deal state is `shipped` or `delivered`:
+
+- Poll `GET /api/deals/:dealId/tracking` every 30 seconds
+- Use React Query's `refetchInterval` option so polling pauses on tab blur
+- Render a vertical timeline of checkpoints (newest at top), each showing:
+  timestamp (relative — "3h ago"), location, status badge, message
+- Status banner at top: "Picked up" / "In transit" / "Out for delivery" /
+  "Delivered • Signed by [name]"
+- "Refresh now" button that calls the endpoint immediately
+- Clear messaging: "Live courier updates" — never "real-time location"
+- When state is `delivered`, show "Funds releasing automatically in Xh"
+  countdown derived from `deliveredAt + 48h`
+
+UX guard rails:
+
+- If tracking number isn't present yet (state still `funded`),
+  show "Awaiting seller to mark as shipped"
+- If `shipmentVerificationStatus === 'flagged'`, show a clear
+  warning + buyer's "Cancel and refund" button
+- If status is `Delivered` but `signed_by` was empty (signature waived),
+  show that to the buyer plainly
+
+---
+
+## Step 4 — Auto-release timer
+
+**Same scheduled job framework** as step 2. New file or same file:
+
+```ts
+export async function autoReleaseDelivered(): Promise<void> {
+  const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000);
+
+  const eligible = await db
+    .select()
+    .from(dealsTable)
+    .where(
+      and(
+        eq(dealsTable.state, "delivered"),
+        lt(dealsTable.deliveredAt, cutoff),
+      ),
+    );
+
+  for (const deal of eligible) {
+    // Call existing release-funds logic. Don't duplicate the Stripe transfer
+    // code — extract it into a shared `releaseDealFunds(deal)` helper that
+    // both the manual route and this job call.
+    try {
+      await releaseDealFunds(deal, "system:auto-release-after-48h");
+    } catch (err) {
+      logger.error({ dealId: deal.id, err }, "Auto-release failed");
+    }
+  }
+}
+```
+
+**Refactor required:** extract the body of the
+`POST /deals/:id/release-funds` route into a `releaseDealFunds(deal, triggeredBy)`
+function that both the route and the timer call. This keeps the Stripe
+transfer logic, idempotency key, error handling, and state transition in
+ONE place.
+
+**Buyer notifications** (lower priority, can be a follow-up):
+- Email at 24h after delivery: "Funds will release in 24h. Raise a dispute if needed."
+- Email at 47h after delivery: "Funds release in 1 hour."
+- Email at release: "Deal complete."
+
+**Tests required:**
+
+- Auto-release fires for a deal in `delivered` state, `deliveredAt` 49h ago
+- Auto-release does NOT fire for a deal in `delivered` state, `deliveredAt` 47h ago
+- Auto-release does NOT fire if a dispute is open
+- Auto-release uses the same Stripe transfer path as manual release
+- Idempotency key on the Stripe transfer prevents double-payment if both
+  manual and auto-release fire
+
+---
+
+## Cancellation rules — full table (for the T&Cs and the test suite)
+
+| State | Sub-condition | Buyer can cancel? | Seller can cancel? | Result |
+|-------|---------------|-------------------|---------------------|--------|
+| created | (none) | ✅ | ✅ | No money has moved |
+| funded | (none) | ✅ | ✅ | Full refund to buyer |
+| shipped | verification pending, < 48h | ❌ | ❌ | Wait for courier scan |
+| shipped | verification flagged (≥ 48h, no scan) | ✅ | ❌ | Full refund to buyer |
+| shipped | verification verified | ❌ | ❌ | Must dispute on delivery |
+| delivered | within 48h dispute window | ❌ | ❌ | Buyer can dispute, not cancel |
+| delivered | dispute raised | n/a | n/a | Admin resolves |
+| complete | (terminal) | ❌ | ❌ | Admin-only refund |
+| disputed | (admin path) | n/a | n/a | Admin decides |
+| cancelled | (terminal) | ❌ | ❌ | — |
+| refunded | (terminal) | ❌ | ❌ | — |
+
+This table needs to be in the test suite as a parameterised cancellation
+test that covers every row.

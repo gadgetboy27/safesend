@@ -1,0 +1,39 @@
+Magic link auth, payment Element on frontend, courier slug validation — all the things I'd flagged. Let me audit the key new files.Confirmed — the `requireAuth` middleware is defined and exported but **never imported or applied anywhere**. Auth is built but not wired up. Let me check the rest quickly.Good — real Stripe Payment Element wired up on the frontend. Let me run the tests against this version to confirm 134/134 still passes.Pure functions still 95/95. Now I have a complete picture.
+
+## Verdict: real progress, one critical wiring gap
+
+**What's genuinely shipped this iteration:**
+
+- **Magic-link auth backend** — token table, 30-min expiry, one-time-use enforcement (via `used` flag check), Resend email integration with dev-mode console fallback, request-link / verify / me / logout endpoints. Token format validated against UUID regex, email lowercased and trimmed before storage. The implementation itself is clean.
+- **Session middleware in `app.ts`** — `express-session` mounted with httpOnly cookies, `secure: true` in production, `sameSite: "none"` for cross-origin frontend, 7-day max age, proper `credentials: true` CORS. Session secret falls back to a dev string if `SESSION_SECRET` isn't set — fine for dev, would want a startup check that fails loud in production.
+- **Login + verify pages** on the frontend
+- **Real Stripe Payment Element** modal — `loadStripe`, `Elements` provider, `PaymentElement`, `confirmPayment` with `redirect: "if_required"`. This is the proper pattern. Reads `VITE_STRIPE_PUBLISHABLE_KEY` from env, gracefully handles its absence.
+- **Courier slug whitelist** — 18 NZ-relevant couriers, validated at `mark-shipped` time. Wired into `deals.ts:280`.
+- **API surface tracking** — `version` field now in API responses (one of the four fixes you mentioned).
+
+**The critical gap — auth is built but not enforced:**
+
+`requireAuth` middleware is exported from `middleware/requireAuth.ts` but `grep` shows **zero imports** in `deals.ts`, `admin.ts`, `sellers.ts`, or `routes/index.ts`. The session is set on login, but no route checks it. The authorization model is still:
+
+```ts
+// deals.ts:188
+if (deal.buyerEmail.toLowerCase() !== body.data.buyerEmail.toLowerCase()) {
+  res.status(403).json({ error: "Only the buyer can confirm payment" });
+}
+```
+
+If you know the deal ID and the buyer's email — both visible in any URL the buyer's ever shared — you are the buyer as far as the API is concerned. Magic links are decorative right now. This is exactly the same posture as before the auth work landed.
+
+The fix is one prompt: *"Apply `requireAuth` to all `/api/deals`, `/api/admin`, and `/api/seller` routes. Replace every `body.data.buyerEmail`/`body.data.sellerEmail` authorization check with `sessionEmail(req)` from the same module. Update integration tests to set `TEST_BYPASS_AUTH=1` so they continue to pass, and add a new test file `test/security/authorization.test.ts` that asserts every mutation returns 401 without a session and 403 when the session email doesn't match the deal's buyer/seller."*
+
+That last bit — the new test file — is the important part. Without it, this same gap can re-open on any future refactor and nothing will catch it.
+
+**Two other carry-forwards from last turn that the agent didn't address:**
+
+1. **Signature-required courier *service* enforcement.** The webhook still treats any `Delivered` event as proof of delivery without checking `signed_by`. The fraud vector — seller chooses a no-signature service, parcel gets left on a porch (or never sent at all to a complicit dropper), tracking shows `Delivered`, funds release — is still wide open. Courier whitelist doesn't fix this; it's the *service tier* within a courier that matters. Recommend: add a `signatureRequired` boolean to `mark-shipped` payload, default true, and have the TrackingMore/AfterShip webhook gate the `delivered` transition on `signed_by` being non-empty when `signatureRequired = true`.
+
+2. **The mixed Stripe pattern** (`application_fee_amount` + `on_behalf_of` at charge, then a separate `transfers.create` at release). Still inconsistent. Will likely surface as "fee charged twice" or a transfer failure once you run real test-mode money through it end-to-end with the Stripe CLI.
+
+**Bottom line:** This iteration delivered the structural pieces — auth backend, payment frontend, courier validation. It didn't connect the auth pieces to the routes that need them, and it skipped the signature-on-delivery enforcement. Both are tractable in one more focused prompt with tests as the spec.
+
+You're close. The visible product (magic-link login, real card capture, courier-validated shipments) genuinely works for a beta tester walking through the happy path. The invisible product — "no one can spoof being someone else" and "no one can fake a delivery" — needs that one more pass before it's safe to put real money through with strangers.

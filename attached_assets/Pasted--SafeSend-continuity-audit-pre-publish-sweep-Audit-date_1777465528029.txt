@@ -1,0 +1,305 @@
+# SafeSend continuity audit — pre-publish sweep
+
+Audit date: 2026-04-30
+Snapshot audited: commit `59692e7` (Transaction-Scanner__4_.zip)
+Auditor: Claude
+
+## Summary
+
+| Layer | Status |
+|-------|--------|
+| Pure-function correctness (state machine, fee math) | ✅ 95/95 unit tests green |
+| Stripe call shape (PaymentIntent, Transfer, Refund) | ✅ Buyer-driven paths correct |
+| Webhook signature validation | ✅ Stripe & TrackingMore correct |
+| Auth on user-facing mutations | ✅ All `requireAuth` |
+| **Auth on admin & deal creation** | ❌ Missing |
+| **Admin dispute-resolution Stripe path** | ❌ Multiple gaps |
+| **OpenAPI spec / generated client drift** | ❌ Generated files hand-edited |
+| **Auth endpoints not in OpenAPI** | ⚠️ Frontend uses raw fetch |
+| **Frontend ignores `signatureRequired`** | ⚠️ Buyer can't see the policy |
+| **operationId typo `raiseDspute`** | ⚠️ Cosmetic but propagated |
+
+Eight findings, ranked by severity below. Three are launch-blockers.
+
+---
+
+## Finding 1 (BLOCKER) — Admin route has no auth
+
+**File:** `artifacts/api-server/src/routes/admin.ts` line 32
+
+```ts
+router.post("/admin/deals/:dealId/resolve-dispute", async (req, res) => {
+```
+
+No `requireAuth`. No admin role check. Anyone on the internet who can guess
+or enumerate a deal ID can:
+
+- Refund any disputed deal to the buyer (seller loses money)
+- Release any disputed deal to the seller (buyer loses money)
+
+This is the highest-privilege action in the entire system and currently has
+the lowest auth posture. **Cannot ship publicly with this gap.**
+
+**Fix:** Apply `requireAuth` AND add an admin role check. The existing
+`requireAuth` only proves the caller has a valid session — it doesn't prove
+they're an admin. Two-step fix:
+
+```ts
+// New middleware: artifacts/api-server/src/middleware/requireAdmin.ts
+import type { Request, Response, NextFunction } from "express";
+
+const ADMIN_EMAILS = (process.env.ADMIN_EMAILS ?? "").toLowerCase().split(",").filter(Boolean);
+
+export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
+  const email = (req.session as any)?.email?.toLowerCase();
+  if (!email || !ADMIN_EMAILS.includes(email)) {
+    res.status(403).json({ error: "Admin access required" });
+    return;
+  }
+  next();
+}
+
+// Apply in admin.ts:
+router.post("/admin/deals/:dealId/resolve-dispute", requireAuth, requireAdmin, async (req, res) => { ... });
+router.get("/admin/deals", requireAuth, requireAdmin, ...);
+router.get("/admin/stats", requireAuth, requireAdmin, ...);
+```
+
+Add `ADMIN_EMAILS` to the startup-check module so the server refuses to boot
+in production without it set.
+
+---
+
+## Finding 2 (BLOCKER) — Admin Stripe path missing all the hardening from the buyer path
+
+**File:** `artifacts/api-server/src/routes/admin.ts` lines 92-123
+
+The buyer-driven `/release-funds` route has been hardened iteratively:
+idempotency keys, `source_transaction`, error capture into
+`stripeTransferError`, return 502 on failure, deal stays in `delivered`.
+
+The admin `resolve-dispute` route does none of this:
+
+| Hardening | Buyer path | Admin path |
+|-----------|------------|------------|
+| Idempotency key on transfer | ✅ `transfer:{dealId}` | ❌ None |
+| Idempotency key on refund | n/a | ❌ None |
+| `source_transaction` on transfer | ✅ | ❌ Missing |
+| Errors captured to DB | ✅ `stripeTransferError` | ❌ Logged then dropped |
+| Returns error status on Stripe failure | ✅ HTTP 502 | ❌ Returns 200 anyway |
+| State stays in safe state on failure | ✅ stays `delivered` | ❌ flips to `refunded`/`complete` regardless |
+
+A double-click by an admin = double transfer. A Stripe failure during admin
+release = deal marked `complete` with no money sent. These are the exact
+bugs we already fixed for the buyer path — the admin path was missed.
+
+**Fix:** Extract the Stripe-transfer logic from the buyer route into a
+shared `releaseDealFunds(deal, triggeredBy)` helper. Have both routes call
+it. Same for the refund logic — `refundDeal(deal, triggeredBy)`. This
+collapses two fragile copies into one well-tested path.
+
+---
+
+## Finding 3 (BLOCKER) — `POST /deals` has no auth
+
+**File:** `artifacts/api-server/src/routes/deals.ts` line 82
+
+```ts
+router.post("/deals", async (req, res) => {
+```
+
+Anyone on the internet can create unlimited deals, naming any buyer/seller
+emails. Each created deal triggers a magic-link email to the buyer (when
+they try to confirm payment). Vectors:
+
+- **Inbox spam / open relay.** Attacker creates 10,000 deals naming
+  `victim@example.com` as buyer; victim's inbox fills with magic links
+- **DB pollution.** Junk deals clutter admin console
+- **Email reputation damage.** Outbound spam from your Resend domain hurts
+  deliverability for legitimate emails
+
+**Fix:** Apply `requireAuth` to the route. The session email becomes the
+buyer's email by default (overridable only if the session belongs to the
+seller and is creating the deal on the buyer's behalf — but probably
+simpler to just say "the session always becomes the buyer email").
+
+If you want anonymous-buyer deal creation as a feature (e.g. seller creates
+a deal and shares the URL with the buyer), do it the other way: seller is
+authenticated, buyer email is a free-text field, but the deal cannot be
+funded until the buyer logs in via magic link to that email. Either pattern
+works; the current "anyone can create anything" doesn't.
+
+Add per-IP rate limiting via `express-rate-limit` regardless — 10 deals per
+IP per hour is generous for legitimate users and crushes spammers.
+
+---
+
+## Finding 4 (BLOCKER) — OpenAPI spec is stale; generated client has been hand-edited
+
+**Files:**
+- `lib/api-spec/openapi.yaml` — last modified commit `608e3ce` (initial scaffold)
+- `lib/api-zod/src/generated/api.ts` — modified across `2d5be1f`, `af0f96e`, `0c2db9d`
+
+The Zod schemas include `version`, `signatureRequired`, and
+`stripeTransferError`. The OpenAPI spec doesn't. Header on the Zod file:
+
+```
+* Generated by orval v8.5.3 🍺
+```
+
+This means: someone (the agent or Replit) has hand-edited the "generated"
+file. The next time anyone runs `pnpm generate` (the orval pipeline), those
+hand-edits will be overwritten and the frontend will lose typing for these
+fields. UI will break or fall back to `any` silently.
+
+**Fix:** Update `lib/api-spec/openapi.yaml` to add the missing fields to the
+`Deal` schema. Then run `pnpm generate` (or whatever the workspace command
+is). Confirm the regenerated Zod still contains the fields. From this
+point, every schema change goes through OpenAPI first.
+
+While you're in there, also add to OpenAPI:
+- `/auth/request-link` (POST)
+- `/auth/verify` (POST)
+- `/auth/me` (GET)
+- `/auth/logout` (POST)
+- `/webhooks/trackingmore` (POST)
+
+Then re-run generation and update the frontend `login.tsx` and `verify.tsx`
+to use the typed hooks instead of raw fetch.
+
+---
+
+## Finding 5 (HIGH) — Frontend doesn't surface `signatureRequired`
+
+The seller can opt out of signature-required at mark-shipped (default true,
+toggleable to false). The buyer is the party most affected by this choice —
+they're protected by the signature requirement.
+
+Currently, the buyer has no way to see whether the seller chose
+signature-required or waived it. Found by `grep`:
+
+```
+grep -rn "signatureRequired" artifacts/safesend/src/ → 0 results
+```
+
+**Fix:** On the deal detail page and the public tracking page, display the
+signature requirement clearly. Recommended copy:
+- True: "✓ Signature required at delivery"
+- False: "⚠ Signature waived — seller chose a no-signature service. Funds
+  release on courier-confirmed delivery without signature."
+
+If false, consider requiring an explicit buyer acknowledgement before the
+deal can be funded — this becomes a meaningful consent step.
+
+---
+
+## Finding 6 (MEDIUM) — Auth endpoints bypass the typed client
+
+**Files:** `artifacts/safesend/src/pages/auth/login.tsx`,
+`artifacts/safesend/src/pages/auth/verify.tsx`
+
+Both use raw `fetch(\`${baseUrl}/api/auth/...\`)` instead of generated
+React Query hooks. Means:
+- No automatic type-checking against API contract
+- No automatic invalidation of related queries on success
+- No retry / error boundary integration with the rest of the app
+- Easy to drift if the auth response shape changes server-side
+
+**Fix:** Once the OpenAPI spec is updated to include auth endpoints
+(finding 4), regenerate the client and swap these two pages to use
+`useRequestLoginLink()`, `useVerifyLoginLink()`, `useGetMe()`, `useLogout()`.
+
+---
+
+## Finding 7 (MEDIUM) — `useRaiseDspute` typo in operationId
+
+**File:** OpenAPI spec, propagated to `lib/api-client-react/src/generated/api.ts`
+
+The dispute hook is named `useRaiseDspute` (missing the 'i' in 'Dispute').
+Now in the generated client and used at three call sites in the frontend.
+
+**Fix:** Fix the operationId in the OpenAPI spec, regenerate the client,
+update the three frontend call sites. Trivial but must happen before public
+launch — once external integrations or analytics tooling reads this, the
+typo becomes permanent. If it's already shipped to anyone external, you'll
+need to keep an alias for backwards compat.
+
+---
+
+## Finding 8 (LOW) — No rate limiting anywhere
+
+`grep` for `rate-limit` / `express-rate-limit` returns nothing.
+
+Endpoints that need rate limits before public launch:
+
+| Endpoint | Limit | Reason |
+|----------|-------|--------|
+| `POST /auth/request-link` | 5/email/hour, 20/IP/hour | Email spam, enumeration |
+| `POST /deals` | 10/IP/hour, 50/session/day | Deal spam |
+| `POST /deals/:id/dispute` | 5/session/hour | Dispute spam |
+| `POST /webhooks/stripe` | none (Stripe handles signing) | n/a |
+| `POST /webhooks/trackingmore` | none (HMAC handles auth) | n/a |
+
+`express-rate-limit` is one `pnpm add` and ~15 lines per endpoint.
+
+---
+
+## What is NOT broken — for confidence
+
+I want to be specific about what audits cleanly. These are real and
+they're the result of the iterative work over the last weeks:
+
+- **State machine.** All 80 transition-validity tests still pass against
+  the latest code. Legal transitions match intent.
+- **Fee math.** All 15 tests pass. NZD-to-cents conversion, $5 minimum,
+  $2,500 cap all correct.
+- **Webhook signature validation.** Both Stripe (`constructEvent`) and
+  TrackingMore (HMAC over raw body) validate correctly. The `express.raw`
+  middleware is mounted before `express.json` in `app.ts` — correct order.
+- **Optimistic concurrency.** Every state mutation uses
+  `WHERE id = ? AND version = ?`. The 409 Concurrent Modification path is
+  wired up.
+- **Idempotency on webhooks.** `idempotency_keys` table catches retries.
+  The `409` from `onConflictDoNothing` skips duplicate processing.
+- **Buyer-path Stripe release.** Has the idempotency key, source_transaction,
+  error capture, 502-on-failure, deal-stays-in-delivered behaviour.
+- **Cancel-vs-refund branching.** Correctly branches on PI status.
+- **Signature-required enforcement on delivery webhook.** `signed_by`
+  presence is checked when `signatureRequired` is true.
+- **Auth on user-facing deal mutations.** All `requireAuth`-protected.
+- **State transition audit trail.** `state_transitions` table records
+  every move with from-state, to-state, triggered-by, note.
+- **Startup config validation.** Refuses to boot on `TEST_BYPASS_AUTH=1`
+  in production, missing/dev session secret, missing webhook secret.
+
+That's the foundation. The eight findings above are all on top of a
+genuinely solid base.
+
+---
+
+## Recommended fix order
+
+Day 1 — must fix before any public access:
+1. Finding 1 (admin auth)
+2. Finding 3 (deal creation auth)
+3. Finding 2 (admin Stripe hardening)
+
+Day 2:
+4. Finding 4 (OpenAPI / generated client sync)
+5. Finding 6 (auth uses typed client)
+6. Finding 7 (raiseDspute typo)
+
+Day 3:
+7. Finding 5 (frontend surfaces signatureRequired)
+8. Finding 8 (rate limiting)
+
+After day 3, the app is genuinely ready for the friends-and-family beta.
+Nothing in this list is hard; together they're roughly 6-8 hours of work.
+The blockers (1, 2, 3) are 2 hours of focused work each.
+
+Send these as a single Replit Agent prompt:
+
+> Fix the eight continuity findings in CONTINUITY-AUDIT.md, in the order
+> listed. For each, write a test that fails before the fix and passes
+> after. Findings 1-3 are launch blockers and must be addressed first.
+> Stop and ask if anything in the audit is unclear before proceeding.
