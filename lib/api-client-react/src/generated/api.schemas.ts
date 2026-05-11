@@ -284,6 +284,10 @@ export interface VerifyTokenBody {
 
 export interface AuthMeResponse {
   email: string;
+  name: string | null;
+  phone: string | null;
+  /** ISO timestamp when phone was verified via OTP. Null means verification still required before payment. */
+  phoneVerifiedAt: string | null;
   /** When this email was first verified via magic link on SafeSend */
   verifiedAt: string;
 }

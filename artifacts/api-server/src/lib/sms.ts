@@ -41,6 +41,59 @@ function dealUrl(dealId: string): string {
   return `${APP_URL}/deals/${dealId}`;
 }
 
+// ── Phone OTP via Twilio Verify ───────────────────────────────────────────────
+
+type TwilioClient = {
+  verify: { v2: { services: (sid: string) => {
+    verifications: { create(opts: { to: string; channel: string }): Promise<unknown> };
+    verificationChecks: { create(opts: { to: string; code: string }): Promise<{ status: string }> };
+  } } };
+};
+
+async function getTwilioVerifyClient(): Promise<{ client: TwilioClient; serviceSid: string } | null> {
+  const sid = process.env.TWILIO_ACCOUNT_SID;
+  const token = process.env.TWILIO_AUTH_TOKEN;
+  const serviceSid = process.env.TWILIO_VERIFY_SERVICE_SID;
+  if (!sid || !token || !serviceSid) return null;
+  const mod = await import("twilio");
+  const Twilio = mod.default as unknown as new (s: string, t: string) => TwilioClient;
+  return { client: new Twilio(sid, token), serviceSid };
+}
+
+export async function sendPhoneOtp(phone: string): Promise<{ ok: boolean; error?: string }> {
+  const ctx = await getTwilioVerifyClient();
+  if (!ctx) {
+    logger.info({ phone }, "No Twilio Verify credentials — OTP skipped (dev mode)");
+    return { ok: true };
+  }
+  try {
+    await ctx.client.verify.v2.services(ctx.serviceSid).verifications.create({ to: phone, channel: "sms" });
+    logger.info({ phone }, "Phone OTP sent");
+    return { ok: true };
+  } catch (err) {
+    logger.error({ phone, err }, "Failed to send phone OTP");
+    return { ok: false, error: "Could not send verification code. Check the number and try again." };
+  }
+}
+
+export async function checkPhoneOtp(phone: string, code: string): Promise<{ ok: boolean; error?: string }> {
+  const ctx = await getTwilioVerifyClient();
+  if (!ctx) {
+    // Dev bypass: accept "000000" when no Twilio credentials are configured
+    return code === "000000"
+      ? { ok: true }
+      : { ok: false, error: "No Twilio credentials — use code 000000 in dev" };
+  }
+  try {
+    const check = await ctx.client.verify.v2.services(ctx.serviceSid).verificationChecks.create({ to: phone, code });
+    if (check.status === "approved") return { ok: true };
+    return { ok: false, error: "Incorrect or expired code. Try again." };
+  } catch (err) {
+    logger.error({ phone, err }, "Failed to check phone OTP");
+    return { ok: false, error: "Could not verify code. Please resend and try again." };
+  }
+}
+
 // ── Deal-event SMS helpers ─────────────────────────────────────────────────────
 
 /**

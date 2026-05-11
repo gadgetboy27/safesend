@@ -53,6 +53,32 @@ export const raiseDisputeLimiter = rateLimit({
 });
 
 /**
+ * 5 OTP send requests per IP per hour.
+ * Prevents Twilio SMS cost abuse and phone number enumeration.
+ */
+export const phoneVerifySendLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 5,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "Too many verification requests. Please try again in an hour." },
+  skip: () => process.env.TEST_BYPASS_AUTH === "1",
+});
+
+/**
+ * 10 OTP confirm attempts per IP per hour.
+ * Prevents brute-force of 6-digit codes (1,000,000 combos, this limits to 10 guesses/hr).
+ */
+export const phoneVerifyConfirmLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 10,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "Too many verification attempts. Please try again in an hour." },
+  skip: () => process.env.TEST_BYPASS_AUTH === "1",
+});
+
+/**
  * 30 public tracking requests per IP per 5 minutes.
  * The public tracking page is intentionally unauthenticated but it must not
  * allow anonymous callers to drive unlimited outbound TrackingMore API calls.

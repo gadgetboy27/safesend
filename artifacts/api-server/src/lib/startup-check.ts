@@ -30,6 +30,20 @@ export function checkStartupRequirements(): void {
     }
   }
 
+  if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN || !process.env.TWILIO_VERIFY_SERVICE_SID) {
+    if (isProduction) {
+      errors.push(
+        "Twilio credentials incomplete (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_VERIFY_SERVICE_SID). " +
+        "Phone verification is required for buyer protection — payments will be blocked without it.",
+      );
+    } else {
+      logger.warn(
+        "Twilio Verify not configured — phone OTP is in dev-bypass mode (code 000000 accepted). " +
+        "Add TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_VERIFY_SERVICE_SID before going live.",
+      );
+    }
+  }
+
   if (!process.env.APP_BASE_URL && !process.env.APP_URL) {
     logger.warn(
       "Neither APP_BASE_URL nor APP_URL is set — " +

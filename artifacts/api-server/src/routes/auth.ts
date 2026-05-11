@@ -4,7 +4,8 @@ import { eq, and, gt } from "drizzle-orm";
 import { db, magicLinkTokensTable, usersTable } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { sendMagicLinkEmail } from "../lib/email";
-import { authRequestLinkLimiter } from "../middleware/rateLimiters";
+import { sendPhoneOtp, checkPhoneOtp } from "../lib/sms";
+import { authRequestLinkLimiter, phoneVerifySendLimiter, phoneVerifyConfirmLimiter } from "../middleware/rateLimiters";
 
 const router: IRouter = Router();
 
@@ -178,6 +179,55 @@ router.post("/auth/verify", async (req: Request, res: Response): Promise<void> =
   // ─────────────────────────────────────────────────────────────────────────
 });
 
+// ─── POST /auth/verify-phone/send ───────────────────────────
+// Sends a 6-digit OTP to the provided phone number via Twilio Verify.
+// Rate limited to 5 attempts/hour to prevent Twilio cost abuse.
+router.post("/auth/verify-phone/send", phoneVerifySendLimiter, async (req: Request, res: Response): Promise<void> => {
+  const email = (req.session as { email?: string }).email;
+  if (!email) { res.status(401).json({ error: "Authentication required" }); return; }
+
+  const { phone } = req.body as { phone?: unknown };
+  if (typeof phone !== "string" || phone.trim().length < 7) {
+    res.status(400).json({ error: "A valid phone number is required" });
+    return;
+  }
+
+  const result = await sendPhoneOtp(phone.trim());
+  if (!result.ok) { res.status(500).json({ error: result.error }); return; }
+
+  logger.info({ email }, "Phone OTP requested");
+  res.json({ ok: true });
+});
+
+// ─── POST /auth/verify-phone/confirm ────────────────────────
+// Checks the OTP, saves the verified phone + display name to the user record.
+// After this call, GET /auth/me will include phoneVerifiedAt.
+router.post("/auth/verify-phone/confirm", phoneVerifyConfirmLimiter, async (req: Request, res: Response): Promise<void> => {
+  const email = (req.session as { email?: string }).email;
+  if (!email) { res.status(401).json({ error: "Authentication required" }); return; }
+
+  const { phone, code, name } = req.body as { phone?: unknown; code?: unknown; name?: unknown };
+  if (typeof phone !== "string" || typeof code !== "string" || phone.trim().length < 7 || code.trim().length < 4) {
+    res.status(400).json({ error: "Phone number and verification code are required" });
+    return;
+  }
+  if (typeof name !== "string" || name.trim().length < 2) {
+    res.status(400).json({ error: "Your full name (at least 2 characters) is required" });
+    return;
+  }
+
+  const result = await checkPhoneOtp(phone.trim(), code.trim());
+  if (!result.ok) { res.status(400).json({ error: result.error }); return; }
+
+  await db
+    .update(usersTable)
+    .set({ phone: phone.trim(), phoneVerifiedAt: new Date(), name: name.trim() })
+    .where(eq(usersTable.email, email));
+
+  logger.info({ email }, "Phone verified");
+  res.json({ ok: true });
+});
+
 // ─── GET /auth/me ────────────────────────────────────────────
 // Returns the currently logged-in user's email and profile, or 401 if not authenticated.
 router.get("/auth/me", async (req: Request, res: Response): Promise<void> => {
@@ -187,12 +237,14 @@ router.get("/auth/me", async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
-  // Fetch user profile so we can return verifiedAt (used by frontend to lock email fields)
   const [user] = await db.select().from(usersTable).where(eq(usersTable.email, email));
 
   res.json({
     authenticated: true,
     email,
+    name: user?.name ?? null,
+    phone: user?.phone ?? null,
+    phoneVerifiedAt: user?.phoneVerifiedAt?.toISOString() ?? null,
     verifiedAt: user?.verifiedAt?.toISOString() ?? new Date().toISOString(),
   });
 });

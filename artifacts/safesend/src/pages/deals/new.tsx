@@ -26,6 +26,7 @@ const baseSchema = z.object({
   amountNzd: z.coerce.number().min(5, "Amount must be at least $5").max(2500, "Amount cannot exceed $2,500 NZD"),
   buyerEmail: z.string().email("Invalid buyer email"),
   sellerEmail: z.string().email("Invalid seller email"),
+  myName: z.string().min(2, "Name must be at least 2 characters").max(100),
   myPhone: phoneSchema,
   itemUrl: z.string().url("Must be a valid URL").optional().or(z.literal("")),
   referenceNumber: z.string().max(80, "Reference too long").optional(),
@@ -62,6 +63,7 @@ export default function NewDeal() {
       amountNzd: 0,
       buyerEmail: "",
       sellerEmail: "",
+      myName: "",
       myPhone: "",
       itemUrl: "",
       referenceNumber: "",
@@ -105,7 +107,7 @@ export default function NewDeal() {
 
   const amountNzd = Number(form.watch("amountNzd")) || 0;
   const fee = Math.max(5, amountNzd * 0.04);
-  const kycFee = amountNzd >= 500 ? 2.50 : 0;
+  const kycFee = amountNzd >= 1000 ? 2.50 : 0;
   const total = amountNzd + fee + kycFee;
 
   function onSubmit(values: FormValues) {
@@ -296,6 +298,23 @@ export default function NewDeal() {
 
                 <FormField
                   control={form.control}
+                  name="myName"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Your full name</FormLabel>
+                      <FormControl>
+                        <Input placeholder="e.g. Jane Smith" autoComplete="name" {...field} />
+                      </FormControl>
+                      <FormDescription className="text-xs">
+                        Required for AML/CFT compliance under NZ law. Not shared with the other party.
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
                   name="myPhone"
                   render={({ field }) => (
                     <FormItem>
@@ -307,7 +326,7 @@ export default function NewDeal() {
                         <Input type="tel" placeholder="+64 21 000 0000" {...field} value={field.value ?? ""} />
                       </FormControl>
                       <FormDescription className="text-xs">
-                        For SMS alerts at key deal milestones. Never shared with the other party.
+                        For SMS alerts at key deal milestones. Phone is verified before payment. Never shared with the other party.
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -421,8 +440,8 @@ export default function NewDeal() {
                           {kycFee > 0 && (
                             <div className="flex justify-between text-amber-700">
                               <span className="flex items-center gap-1">
-                                Identity verification
-                                <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium">$500+ deal</span>
+                                Enhanced ID verification
+                                <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium">$1,000+ deal</span>
                               </span>
                               <span>${kycFee.toFixed(2)}</span>
                             </div>

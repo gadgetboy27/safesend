@@ -56,11 +56,6 @@ export default function Home() {
 
             {/* Left — copy */}
             <div>
-              <div className="inline-flex items-center gap-2 bg-teal-900/60 border border-teal-700/50 rounded-full px-4 py-1.5 text-sm text-teal-300 mb-8 font-medium">
-                <Globe className="h-3.5 w-3.5" />
-                NZ's escrow marketplace — sendsafe.co.nz
-              </div>
-
               <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight leading-tight mb-6">
                 Buy from anyone.
                 <br />
@@ -172,7 +167,7 @@ export default function Home() {
             Three steps between strangers and a safe deal
           </h2>
           <p className="text-slate-500 text-center max-w-xl mx-auto mb-16 text-lg">
-            No apps to install. No accounts required for buyers.
+            No app to install. Buyers verify by email link — no passwords, no registration forms.
           </p>
 
           <div className="grid md:grid-cols-3 gap-8">
@@ -352,8 +347,8 @@ export default function Home() {
               },
               {
                 icon: <BadgeCheck className="h-8 w-8 text-blue-600 mx-auto mb-3" />,
-                title: "Verified identities",
-                body: "For deals over $500 NZD, both parties are identity-verified via Stripe Identity before funds are released. Your details stay private.",
+                title: "Phone-verified buyers",
+                body: "Every buyer verifies their mobile number via one-time code before paying — proving a real, traceable identity. Required under NZ's AML/CFT Act.",
               },
               {
                 icon: <Lock className="h-8 w-8 text-violet-600 mx-auto mb-3" />,
@@ -386,8 +381,13 @@ export default function Home() {
             <br />
             <span className="text-teal-400">You Can Use SafeSend.</span>
           </h2>
-          <p className="text-slate-400 text-lg mb-10 max-w-xl mx-auto">
-            Start a deal in under two minutes. No account required to create — just an email address on both sides.
+          <p className="text-slate-400 text-lg mb-6 max-w-xl mx-auto">
+            Start a deal in under two minutes. Verify by email link — no passwords, no registration forms.
+          </p>
+          <p className="text-slate-600 text-xs mb-10 max-w-lg mx-auto leading-relaxed">
+            SafeSend operates under New Zealand's AML/CFT Act 2009. A verified mobile number is required from buyers before payment.
+            Deals under $1,000 NZD use phone OTP only. Deals of $1,000 NZD or more may require additional identity verification.
+            All transactions are capped at $2,500 NZD.
           </p>
           <div className="flex flex-col sm:flex-row justify-center gap-4">
             <Link href="/deals/new">

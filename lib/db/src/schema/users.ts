@@ -4,6 +4,9 @@ import { z } from "zod/v4";
 
 export const usersTable = pgTable("users", {
   email: text("email").primaryKey(),
+  name: text("name"),
+  phone: text("phone"),
+  phoneVerifiedAt: timestamp("phone_verified_at", { withTimezone: true }),
   verifiedAt: timestamp("verified_at", { withTimezone: true }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
