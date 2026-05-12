@@ -8,9 +8,9 @@ if (!key) {
   );
 }
 if (process.env.NODE_ENV === "production" && !key.startsWith("sk_live_")) {
-  logger.warn(
-    "STRIPE_SECRET_KEY is a test key in a production environment — " +
-    "no real payments will be processed. Replace with sk_live_... before going live.",
+  throw new Error(
+    "STRIPE_SECRET_KEY is a test key (sk_test_...) but NODE_ENV=production. " +
+    "Real payments cannot be processed. Set a live key (sk_live_...) in production secrets.",
   );
 }
 

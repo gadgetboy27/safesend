@@ -6,6 +6,14 @@ export function checkStartupRequirements(): void {
   const isProduction = process.env.NODE_ENV === "production";
   const errors: string[] = [];
 
+  if (!process.env.NODE_ENV) {
+    errors.push(
+      "NODE_ENV is not set. Set NODE_ENV=production on the deployed server. " +
+      "Without it, dev-mode shortcuts are active in production: magic links are " +
+      "returned in API responses and CORS allows all origins.",
+    );
+  }
+
   if (isProduction && process.env.TEST_BYPASS_AUTH === "1") {
     errors.push("TEST_BYPASS_AUTH=1 is set in a production environment — this disables all authentication.");
   }

@@ -605,9 +605,9 @@ router.post("/deals/:dealId/release-funds", requireAuth, async (req, res): Promi
 
   const result = await releaseDealFunds(deal, buyerActorRelease);
   if (!result.ok) {
+    req.log.error({ dealId: deal.id, detail: result.error }, "release-funds: transfer failed");
     res.status(502).json({
-      error: "Transfer to seller failed. Your payment is secure and the deal has not been released. Please try again or contact support if the problem persists.",
-      detail: result.error,
+      error: "Transfer to seller failed. Your payment is secure and the deal has not been released. Please try again or contact support at disputes@safesend.nz if the problem persists.",
     });
     return;
   }

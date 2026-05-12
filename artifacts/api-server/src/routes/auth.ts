@@ -135,7 +135,13 @@ router.post("/auth/verify", async (req: Request, res: Response): Promise<void> =
     });
 
 
-  // Set the email on the session
+  // Regenerate the session ID before writing the authenticated email.
+  // This prevents session fixation: an attacker who obtained a pre-auth
+  // session cookie cannot reuse it after the victim authenticates.
+  await new Promise<void>((resolve, reject) =>
+    req.session.regenerate((err) => (err ? reject(err) : resolve())),
+  );
+
   (req.session as { email?: string }).email = row.email;
 
   logger.info({ email: row.email }, "User authenticated via magic link");

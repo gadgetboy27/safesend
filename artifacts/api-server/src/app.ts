@@ -1,8 +1,11 @@
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import path from "path";
 import cors from "cors";
+import helmet from "helmet";
 import session from "express-session";
+import ConnectPgSimple from "connect-pg-simple";
 import pinoHttp from "pino-http";
+import { pool } from "@workspace/db";
 import { logger } from "./lib/logger";
 
 // Webhook routes need the raw body BEFORE JSON parsing so HMAC signatures work.
@@ -15,6 +18,30 @@ const app: Express = express();
 // Trust Replit's reverse proxy so express-rate-limit can correctly identify
 // clients from X-Forwarded-For headers rather than the proxy's internal IP.
 app.set("trust proxy", 1);
+
+// Security headers — must be first middleware so all responses are covered.
+// In production: CSP blocks inline scripts and restricts asset origins.
+// In development: CSP is relaxed so Vite HMR and devtools work without friction.
+app.use(
+  helmet({
+    contentSecurityPolicy:
+      process.env.NODE_ENV === "production"
+        ? {
+            directives: {
+              defaultSrc: ["'self'"],
+              scriptSrc: ["'self'", "https://js.stripe.com"],
+              frameSrc: ["'self'", "https://js.stripe.com"],
+              connectSrc: ["'self'", "https://api.stripe.com"],
+              imgSrc: ["'self'", "data:", "https:"],
+              styleSrc: ["'self'", "'unsafe-inline'"],
+              fontSrc: ["'self'", "data:"],
+              objectSrc: ["'none'"],
+              upgradeInsecureRequests: [],
+            },
+          }
+        : false,
+  }),
+);
 
 app.use(
   pinoHttp({
@@ -148,9 +175,20 @@ app.use((req: Request, res: Response, next: NextFunction): void => {
 // SESSION_SECRET is validated by checkStartupRequirements() in index.ts — the server
 // will hard-exit before accepting any traffic if the secret is missing or is still
 // the insecure dev fallback value.
+//
+// Store: connect-pg-simple persists sessions to the "session" table in Postgres.
+// This means sessions survive server restarts and work correctly across multiple
+// processes. The MemoryStore default is explicitly NOT used (it leaks memory in
+// production and wipes all sessions on restart).
+const PgSession = ConnectPgSimple(session);
 const sessionSecret = process.env.SESSION_SECRET ?? "dev-secret-change-in-production";
 app.use(
   session({
+    store: new PgSession({
+      pool,
+      tableName: "session",
+      createTableIfMissing: true,
+    }),
     secret: sessionSecret,
     name: "sid",
     resave: false,
