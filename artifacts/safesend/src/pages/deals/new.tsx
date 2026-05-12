@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { AlertCircle, DollarSign, ExternalLink, Hash, ShieldCheck, ArrowRight, ShoppingBag, Tag, Lock, BadgeCheck } from "lucide-react";
+import { AlertCircle, DollarSign, ExternalLink, Hash, ShieldCheck, ArrowRight, ShoppingBag, Tag, Lock, BadgeCheck, Sparkles } from "lucide-react";
 import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -11,7 +11,7 @@ import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, For
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { useCreateDeal, useGetMe } from "@workspace/api-client-react";
+import { useCreateDeal, useGetMe, useGetSellerStatus, getGetSellerStatusQueryKey } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
 
 const phoneSchema = z
@@ -48,6 +48,19 @@ export default function NewDeal() {
   const createDeal = useCreateDeal();
   const { data: me, isLoading: meLoading } = useGetMe();
 
+  // Only fetch seller status when user picks the seller role — avoids a spurious request for buyers
+  const { data: sellerStatus } = useGetSellerStatus(
+    { email: me?.email ?? "" },
+    {
+      query: {
+        enabled: role === "seller" && !!me?.email,
+        queryKey: getGetSellerStatusQueryKey({ email: me?.email ?? "" }),
+      },
+    },
+  );
+
+  const isVerifiedSeller = role === "seller" && !!(sellerStatus?.onboardingComplete);
+
   // Redirect to login if not authenticated — deal creation requires a verified email
   useEffect(() => {
     if (!meLoading && !me?.email) {
@@ -79,6 +92,13 @@ export default function NewDeal() {
     if (role === "seller") form.setValue("sellerEmail", me.email);
     if (role === "buyer") form.setValue("buyerEmail", me.email);
   }, [me?.email, role, form]);
+
+  // Prefill name/phone from the user's saved SafeSend profile (set during phone verification or a prior deal)
+  useEffect(() => {
+    if (!me?.email || !role) return;
+    if (me.name) form.setValue("myName", me.name, { shouldValidate: true });
+    if (me.phone) form.setValue("myPhone", me.phone, { shouldValidate: true });
+  }, [me?.name, me?.phone, me?.email, role, form]);
 
   // URL pre-fill (shared links)
   useEffect(() => {
@@ -243,6 +263,24 @@ export default function NewDeal() {
           </p>
         </div>
 
+        {/* Returning user welcome — shown when we have profile data to prefill */}
+        {(me?.name || me?.phone) && !prefilled && (
+          <Alert className="mb-4 bg-teal-50 border-teal-300">
+            <Sparkles className="h-4 w-4 text-teal-700" />
+            <AlertTitle className="text-teal-800 font-semibold">
+              Welcome back{me.name ? `, ${me.name.split(" ")[0]}` : ""}
+              {isVerifiedSeller && (
+                <span className="ml-2 inline-flex items-center gap-1 text-xs font-semibold bg-teal-700 text-white px-2 py-0.5 rounded-full">
+                  <BadgeCheck className="h-3 w-3" /> Verified Seller
+                </span>
+              )}
+            </AlertTitle>
+            <AlertDescription className="text-teal-700 text-sm">
+              We've pre-filled your name and phone from your SafeSend profile. Check they're still correct before submitting.
+            </AlertDescription>
+          </Alert>
+        )}
+
         {prefilled && (
           <Alert className="mb-6 bg-teal-50 border-teal-200">
             <AlertCircle className="h-4 w-4 text-teal-700" />
@@ -305,8 +343,11 @@ export default function NewDeal() {
                       <FormControl>
                         <Input placeholder="e.g. Jane Smith" autoComplete="name" {...field} />
                       </FormControl>
-                      <FormDescription className="text-xs">
+                      <FormDescription className="text-xs flex items-center gap-1">
                         Required for AML/CFT compliance under NZ law. Not shared with the other party.
+                        {me?.name && field.value === me.name && (
+                          <span className="text-teal-600 font-medium">· From your profile</span>
+                        )}
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -325,8 +366,11 @@ export default function NewDeal() {
                       <FormControl>
                         <Input type="tel" placeholder="+64 21 000 0000" {...field} value={field.value ?? ""} />
                       </FormControl>
-                      <FormDescription className="text-xs">
+                      <FormDescription className="text-xs flex items-center gap-1">
                         For SMS alerts at key deal milestones. Phone is verified before payment. Never shared with the other party.
+                        {me?.phone && field.value === me.phone && (
+                          <span className="text-teal-600 font-medium">· From your profile</span>
+                        )}
                       </FormDescription>
                       <FormMessage />
                     </FormItem>

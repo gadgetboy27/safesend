@@ -111,7 +111,8 @@ async function sendEmail(
   }
   // When E2E_EMAIL_RECIPIENT is set (e.g. during e2e tests), redirect all
   // outbound email to that address so a human can verify the full template.
-  const recipient = process.env.E2E_EMAIL_RECIPIENT ?? to;
+  // Use || not ?? — an empty string env var should fall through to the real recipient.
+  const recipient = process.env.E2E_EMAIL_RECIPIENT || to;
   const from = creds.fromEmail ?? FROM;
   const { Resend } = await import("resend");
   const { data, error } = await new Resend(creds.apiKey).emails.send({ from, to: recipient, subject, html });

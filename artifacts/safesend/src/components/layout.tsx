@@ -54,6 +54,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <Link href="/terms" className="hover:text-slate-200 transition-colors">Terms of Service</Link>
             <Link href="/escrow-agreement" className="hover:text-slate-200 transition-colors">Escrow Agreement</Link>
             <Link href="/privacy" className="hover:text-slate-200 transition-colors">Privacy</Link>
+            <a href="mailto:disputes@safesend.nz" className="hover:text-slate-200 transition-colors">Contact / Disputes</a>
           </div>
           <p className="text-xs text-slate-500">© {new Date().getFullYear()} SafeSend · sendsafe.co.nz · All rights reserved.</p>
         </div>

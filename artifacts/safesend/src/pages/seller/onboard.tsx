@@ -42,7 +42,7 @@ export default function SellerOnboard() {
   }
 
   const handleSetup = () => {
-    const returnUrl = `${window.location.origin}/seller/status`;
+    const returnUrl = `${window.location.origin}/seller/status?email=${encodeURIComponent(me.email)}`;
     const refreshUrl = `${window.location.origin}/seller/onboard`;
     onboard.mutate(
       { data: { email: me.email, returnUrl, refreshUrl } },

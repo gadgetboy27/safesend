@@ -61,21 +61,26 @@ router.post("/auth/request-link", authRequestLinkLimiter, async (req: Request, r
   const path = returnPath ?? "/";
   const magicLink = `${baseUrl}/auth/verify?token=${token}&next=${encodeURIComponent(path)}`;
 
+  const isDev = process.env.NODE_ENV !== "production";
+
   try {
     await sendMagicLinkEmail(email, magicLink);
-  } catch {
-    res.status(500).json({ error: "Failed to send login email. Please try again." });
-    return;
+  } catch (err) {
+    if (!isDev) {
+      res.status(500).json({ error: "Failed to send login email. Please try again." });
+      return;
+    }
+    // In dev, email failure is non-fatal — the devLink in the response is enough.
+    logger.warn({ email, err: err instanceof Error ? err.message : String(err) }, "Email failed in dev — returning devLink only");
   }
 
   logger.info({ email }, "Magic link requested");
 
   // Always return the link in dev so the login page can show it as a clickable
   // shortcut — useful whether or not RESEND_API_KEY is configured.
-  const isDev = process.env.NODE_ENV !== "production";
   res.json({
     ok: true,
-    message: "Check your email for a sign-in link.",
+    message: isDev ? "Dev mode: use the link below to sign in." : "Check your email for a sign-in link.",
     ...(isDev && { devLink: magicLink }),
   });
 });

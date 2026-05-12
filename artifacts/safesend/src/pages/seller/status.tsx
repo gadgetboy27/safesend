@@ -1,27 +1,40 @@
-import { useRoute } from "wouter";
 import { Layout } from "@/components/layout";
-import { useGetSellerStatus, getGetSellerStatusQueryKey } from "@workspace/api-client-react";
-import { ShieldCheck, AlertCircle } from "lucide-react";
+import { useGetSellerStatus, getGetSellerStatusQueryKey, useGetMe } from "@workspace/api-client-react";
+import { ShieldCheck, AlertCircle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
 
 export default function SellerStatus() {
-  const params = new URLSearchParams(window.location.search);
-  const email = params.get("email") || "";
-  
-  const { data: status, isLoading, isError } = useGetSellerStatus(
+  // Prefer session email; fall back to ?email= param (for Stripe return_url redirect)
+  const { data: me, isLoading: meLoading } = useGetMe({ query: { retry: false, queryKey: ["getMe"] } });
+  const urlEmail = new URLSearchParams(window.location.search).get("email") || "";
+  const email = me?.email || urlEmail;
+
+  const { data: status, isLoading: statusLoading, isError } = useGetSellerStatus(
     { email },
     { query: { enabled: !!email, queryKey: getGetSellerStatusQueryKey({ email }) } }
   );
+
+  const isLoading = meLoading || (!!email && statusLoading);
+
+  if (isLoading) {
+    return (
+      <Layout>
+        <div className="container max-w-md mx-auto px-4 py-20 flex justify-center">
+          <Loader2 className="w-8 h-8 animate-spin text-teal-600" />
+        </div>
+      </Layout>
+    );
+  }
 
   if (!email) {
     return (
       <Layout>
         <div className="container max-w-md mx-auto px-4 py-20 text-center">
           <AlertCircle className="w-12 h-12 text-amber-500 mx-auto mb-4" />
-          <h1 className="text-xl font-bold mb-2">No email provided</h1>
-          <p className="text-slate-600 mb-6">Please return to the onboard page.</p>
-          <Link href="/seller/onboard"><Button>Go to Setup</Button></Link>
+          <h1 className="text-xl font-bold mb-2">Sign in required</h1>
+          <p className="text-slate-600 mb-6">Please sign in to view your seller status.</p>
+          <Link href="/login?next=/seller/status"><Button>Sign in</Button></Link>
         </div>
       </Layout>
     );
@@ -30,9 +43,7 @@ export default function SellerStatus() {
   return (
     <Layout>
       <div className="container max-w-md mx-auto px-4 py-20">
-        {isLoading ? (
-          <div className="text-center text-slate-500">Checking your status...</div>
-        ) : isError || !status ? (
+        {isError || !status ? (
           <div className="text-center">
             <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
             <h1 className="text-xl font-bold mb-2">Error loading status</h1>
@@ -63,7 +74,7 @@ export default function SellerStatus() {
                 <p className="text-slate-600 mb-8">
                   Your Stripe profile requires more information before you can receive payouts.
                 </p>
-                <Link href={`/seller/onboard?email=${encodeURIComponent(email)}`}>
+                <Link href="/seller/onboard">
                   <Button className="w-full bg-slate-900 text-white hover:bg-slate-800">Continue Setup</Button>
                 </Link>
               </>

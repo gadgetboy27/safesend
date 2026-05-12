@@ -67,7 +67,7 @@ function StateGuidance({ state, isBuyer }: { state: string; isBuyer: boolean }) 
       ? "Delivery confirmed. Release funds when satisfied, or raise a dispute if there's a problem. Funds auto-release in 48 hours."
       : "Delivery confirmed by courier — waiting for the buyer to release funds.",
     complete: "This deal is complete. Funds have been transferred to the seller.",
-    disputed: "A dispute has been raised. Funds are frozen while an admin reviews the case.",
+    disputed: "A dispute has been raised. Funds are frozen while an admin reviews the case. For urgent queries email disputes@safesend.nz.",
     cancelled: "This deal has been cancelled.",
     refunded: "This deal was resolved and the buyer has been refunded.",
   };
@@ -988,7 +988,8 @@ function DisputeModal({ isOpen, onClose, dealId, email, onSuccess }: {
           </DialogDescription>
         </DialogHeader>
         <div className="rounded-lg bg-amber-50 border border-amber-100 px-4 py-3 text-sm text-amber-800 mb-2">
-          <strong>What happens next:</strong> Both parties will be contacted by email. The admin will review evidence and make a resolution decision, typically within 2–3 business days.
+          <strong>What happens next:</strong> Both parties will be contacted by email. The admin will review evidence and make a resolution decision, typically within 2–3 business days.{" "}
+          For urgent matters email <a href="mailto:disputes@safesend.nz" className="font-semibold underline underline-offset-2">disputes@safesend.nz</a>.
         </div>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">

@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
-import { eq, and, desc, count, sum, sql } from "drizzle-orm";
-import { db, dealsTable } from "@workspace/db";
+import { eq, and, desc, count, sum } from "drizzle-orm";
+import { db, dealsTable, stateTransitionsTable } from "@workspace/db";
 import {
   AdminListDealsQueryParams,
   AdminListDealsResponse,
@@ -26,6 +26,21 @@ function dealToResponse(deal: typeof dealsTable.$inferSelect) {
     totalNzd: Number(deal.totalNzd),
   };
 }
+
+// GET /admin/deals/:dealId/transitions — full audit trail for a deal
+router.get("/admin/deals/:dealId/transitions", requireAuth, requireAdmin, async (req, res): Promise<void> => {
+  const { dealId } = req.params;
+  const [deal] = await db.select().from(dealsTable).where(eq(dealsTable.id, dealId));
+  if (!deal) { res.status(404).json({ error: "Deal not found" }); return; }
+
+  const transitions = await db
+    .select()
+    .from(stateTransitionsTable)
+    .where(eq(stateTransitionsTable.dealId, dealId))
+    .orderBy(stateTransitionsTable.createdAt);
+
+  res.json({ deal: dealToResponse(deal), transitions });
+});
 
 router.get("/admin/deals", requireAuth, requireAdmin, async (req, res): Promise<void> => {
   const parsed = AdminListDealsQueryParams.safeParse(req.query);
