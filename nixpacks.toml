@@ -1,8 +1,8 @@
 [phases.setup]
-nixPkgs = ["nodejs_22", "pnpm"]
+nixPkgs = ["nodejs_23", "pnpm"]
 
 [phases.install]
-cmds = ["pnpm install --no-frozen-lockfile --ignore-scripts"]
+cmds = ["pnpm install --no-frozen-lockfile"]
 
 [phases.build]
 cmds = [

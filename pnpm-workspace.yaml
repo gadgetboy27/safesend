@@ -69,7 +69,9 @@ autoInstallPeers: false
 
 onlyBuiltDependencies:
   - '@swc/core'
+  - '@tailwindcss/oxide'
   - esbuild
+  - lightningcss
   - msw
   - unrs-resolver
 
