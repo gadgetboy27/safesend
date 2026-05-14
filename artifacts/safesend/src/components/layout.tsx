@@ -1,7 +1,7 @@
 import { Link, useLocation } from "wouter";
 import { ShieldCheck, LogOut, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useGetMe, useLogout } from "@workspace/api-client-react";
+import { useGetMe, useLogout, getGetMeQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -9,7 +9,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const isAdmin = location.startsWith("/admin");
   const queryClient = useQueryClient();
 
-  const { data: me } = useGetMe();
+  const { data: me } = useGetMe({ query: { retry: false, queryKey: getGetMeQueryKey() } });
   const isAuthenticated = me !== undefined;
 
   const { mutate: logout } = useLogout({

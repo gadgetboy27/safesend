@@ -1,18 +1,22 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
+import { useQueryClient } from "@tanstack/react-query";
 import { Layout } from "@/components/layout";
-import { useVerifyLoginLink } from "@workspace/api-client-react";
+import { useVerifyLoginLink, getGetMeQueryKey } from "@workspace/api-client-react";
 
 export default function AuthVerify() {
   const [, setLocation] = useLocation();
   const [status, setStatus] = useState<"verifying" | "success" | "error">("verifying");
   const [errorMsg, setErrorMsg] = useState("");
   const [token, setToken] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
   const verify = useVerifyLoginLink({
     mutation: {
       onSuccess: (_data, _vars, _ctx) => {
         setStatus("success");
+        // Invalidate the /auth/me cache so the nav immediately shows the logged-in state
+        queryClient.invalidateQueries({ queryKey: getGetMeQueryKey() });
         const rawNext = new URLSearchParams(window.location.search).get("next") ?? "/deals";
         const next = rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/deals";
         setTimeout(() => setLocation(next), 500);
