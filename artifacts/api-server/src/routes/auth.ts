@@ -49,7 +49,13 @@ router.post("/auth/request-link", authRequestLinkLimiter, async (req: Request, r
   const token = randomUUID();
   const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
 
-  await db.insert(magicLinkTokensTable).values({ email, token, expiresAt });
+  try {
+    await db.insert(magicLinkTokensTable).values({ email, token, expiresAt });
+  } catch (dbErr) {
+    const detail = dbErr instanceof Error ? dbErr.message : String(dbErr);
+    res.status(500).json({ error: "DB insert failed — temp diagnostic", detail });
+    return;
+  }
 
   // REPLIT_DEV_DOMAIN is already the full hostname (e.g. abc-xyz.janeway.replit.dev)
   const baseUrl =
