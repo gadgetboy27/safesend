@@ -1,10 +1,25 @@
 import { Link, useLocation } from "wouter";
-import { ShieldCheck } from "lucide-react";
+import { ShieldCheck, LogOut, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useGetMe, useLogout } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
 
 export function Layout({ children }: { children: React.ReactNode }) {
-  const [location] = useLocation();
+  const [location, navigate] = useLocation();
   const isAdmin = location.startsWith("/admin");
+  const queryClient = useQueryClient();
+
+  const { data: me } = useGetMe();
+  const isAuthenticated = me !== undefined;
+
+  const { mutate: logout } = useLogout({
+    mutation: {
+      onSuccess: () => {
+        queryClient.clear();
+        navigate("/login");
+      },
+    },
+  });
 
   return (
     <div className="min-h-[100dvh] flex flex-col">
@@ -14,22 +29,49 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <ShieldCheck className="h-6 w-6 text-teal-700" />
             <span className="text-xl font-semibold tracking-tight text-slate-900">SafeSend</span>
           </Link>
-          
+
           <nav className="flex items-center gap-4">
             {!isAdmin ? (
               <>
                 <Link href="/how-it-works">
                   <Button variant="ghost" className="hidden sm:inline-flex text-slate-600">How It Works</Button>
                 </Link>
-                <Link href="/deals/new">
-                  <Button variant="ghost" className="hidden sm:inline-flex text-slate-600">Create Deal</Button>
-                </Link>
-                <Link href="/deals">
-                  <Button variant="ghost" className="hidden sm:inline-flex text-slate-600">My Deals</Button>
-                </Link>
-                <Link href="/seller/onboard">
-                  <Button variant="outline" className="hidden md:inline-flex text-slate-700">Seller Setup</Button>
-                </Link>
+                {isAuthenticated && (
+                  <>
+                    <Link href="/deals/new">
+                      <Button variant="ghost" className="hidden sm:inline-flex text-slate-600">Create Deal</Button>
+                    </Link>
+                    <Link href="/deals">
+                      <Button variant="ghost" className="hidden sm:inline-flex text-slate-600">My Deals</Button>
+                    </Link>
+                    <Link href="/seller/onboard">
+                      <Button variant="outline" className="hidden md:inline-flex text-slate-700">Seller Setup</Button>
+                    </Link>
+                  </>
+                )}
+                {isAuthenticated ? (
+                  <div className="flex items-center gap-2">
+                    <span className="hidden lg:flex items-center gap-1.5 text-sm text-slate-500">
+                      <User className="h-3.5 w-3.5" />
+                      {me?.email}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-slate-600 gap-1.5"
+                      onClick={() => logout()}
+                    >
+                      <LogOut className="h-4 w-4" />
+                      <span className="hidden sm:inline">Sign Out</span>
+                    </Button>
+                  </div>
+                ) : (
+                  <Link href={`/login?next=${encodeURIComponent(location)}`}>
+                    <Button variant="default" size="sm" className="bg-teal-700 hover:bg-teal-800 text-white">
+                      Sign In
+                    </Button>
+                  </Link>
+                )}
               </>
             ) : (
               <Link href="/admin">
