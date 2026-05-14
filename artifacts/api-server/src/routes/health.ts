@@ -15,7 +15,9 @@ router.get("/healthz/db", async (_req, res) => {
     await db.execute(sql`SELECT 1`);
     res.json({ status: "ok", db: "connected" });
   } catch (err) {
-    res.status(500).json({ status: "error", db: "unreachable", detail: err instanceof Error ? err.message : String(err) });
+    const detail = err instanceof Error ? err.message : String(err);
+    const cause = err instanceof Error && err.cause instanceof Error ? err.cause.message : String((err as { cause?: unknown } | undefined)?.cause ?? "");
+    res.status(500).json({ status: "error", db: "unreachable", detail, cause });
   }
 });
 
