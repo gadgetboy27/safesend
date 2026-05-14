@@ -7,7 +7,7 @@ const router: IRouter = Router();
 
 router.get("/healthz", (_req, res) => {
   const data = HealthCheckResponse.parse({ status: "ok" });
-  res.json(data);
+  res.json({ ...data, build: "ee9545e" });
 });
 
 router.get("/healthz/db", async (_req, res) => {
