@@ -19,6 +19,21 @@ const app: Express = express();
 // clients from X-Forwarded-For headers rather than the proxy's internal IP.
 app.set("trust proxy", 1);
 
+// Canonical domain redirect — runs before all other middleware.
+// Any request arriving on a non-canonical host is 301'd to safesend.nz.
+// This covers all redirect domains (safesend.co.nz, sendsafe.nz, etc.)
+// and the www.safesend.nz alias, all of which are pointed at Railway.
+const CANONICAL_HOST = "safesend.nz";
+app.use((req: Request, res: Response, next: NextFunction): void => {
+  if (process.env.NODE_ENV !== "production") { next(); return; }
+  const host = (req.headers["x-forwarded-host"] as string | undefined) ?? req.hostname;
+  if (host && host !== CANONICAL_HOST) {
+    res.redirect(301, `https://${CANONICAL_HOST}${req.url}`);
+    return;
+  }
+  next();
+});
+
 // Security headers — must be first middleware so all responses are covered.
 // In production: CSP blocks inline scripts and restricts asset origins.
 // In development: CSP is relaxed so Vite HMR and devtools work without friction.
