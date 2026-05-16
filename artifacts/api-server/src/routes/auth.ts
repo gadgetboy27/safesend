@@ -144,6 +144,10 @@ router.post("/auth/verify", async (req: Request, res: Response): Promise<void> =
 
   (req.session as { email?: string }).email = row.email;
 
+  await new Promise<void>((resolve, reject) =>
+    req.session.save((err) => (err ? reject(err) : resolve())),
+  );
+
   logger.info({ email: row.email }, "User authenticated via magic link");
   res.json({ ok: true, email: row.email });
 
