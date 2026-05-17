@@ -1,7 +1,7 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import { randomUUID } from "crypto";
-import { eq, and, gt } from "drizzle-orm";
-import { db, magicLinkTokensTable, usersTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
+import { db, pool, magicLinkTokensTable, usersTable } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { sendMagicLinkEmail } from "../lib/email";
 import { sendPhoneOtp, checkPhoneOtp } from "../lib/sms";
@@ -101,22 +101,16 @@ router.post("/auth/verify", async (req: Request, res: Response): Promise<void> =
   }
 
   const { token } = parsed;
-  const now = new Date();
 
-  // Atomic UPDATE...RETURNING: marks the token used only if it is still valid and
-  // unused. This eliminates the SELECT-then-UPDATE race (TOCTOU) that would allow
-  // two concurrent requests carrying the same token to both succeed.
-  const [row] = await db
-    .update(magicLinkTokensTable)
-    .set({ used: true })
-    .where(
-      and(
-        eq(magicLinkTokensTable.token, token),
-        eq(magicLinkTokensTable.used, false),
-        gt(magicLinkTokensTable.expiresAt, now),
-      ),
-    )
-    .returning();
+  // Atomic UPDATE...RETURNING using raw SQL with server-side NOW() — avoids
+  // any client-clock or Drizzle timestamp serialisation issues with the pooler.
+  const { rows } = await pool.query<{ email: string }>(
+    `UPDATE magic_link_tokens SET used = true
+     WHERE token = $1 AND used = false AND expires_at > NOW()
+     RETURNING email`,
+    [token],
+  );
+  const row = rows[0];
 
   if (!row) {
     res.status(401).json({ error: "Invalid or expired login link" });
@@ -128,10 +122,10 @@ router.post("/auth/verify", async (req: Request, res: Response): Promise<void> =
   // email is the primary key so this is idempotent and safe to run on every login.
   await db
     .insert(usersTable)
-    .values({ email: row.email, verifiedAt: new Date(now) })
+    .values({ email: row.email, verifiedAt: new Date() })
     .onConflictDoUpdate({
       target: usersTable.email,
-      set: { verifiedAt: new Date(now) },
+      set: { verifiedAt: new Date() },
     });
 
 
