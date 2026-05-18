@@ -79,6 +79,20 @@ export const phoneVerifyConfirmLimiter = rateLimit({
 });
 
 /**
+ * 20 Google sign-in attempts per IP per hour.
+ * Google tokens are single-use so replaying is moot, but this caps
+ * any abuse of the tokeninfo verification endpoint.
+ */
+export const googleAuthLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 20,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "Too many sign-in attempts from this IP. Please try again in an hour." },
+  skip: () => process.env.TEST_BYPASS_AUTH === "1",
+});
+
+/**
  * 30 public tracking requests per IP per 5 minutes.
  * The public tracking page is intentionally unauthenticated but it must not
  * allow anonymous callers to drive unlimited outbound TrackingMore API calls.

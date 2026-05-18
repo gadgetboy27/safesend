@@ -5,7 +5,7 @@ import { db, pool, magicLinkTokensTable, usersTable } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { sendMagicLinkEmail } from "../lib/email";
 import { sendPhoneOtp, checkPhoneOtp } from "../lib/sms";
-import { authRequestLinkLimiter, phoneVerifySendLimiter, phoneVerifyConfirmLimiter } from "../middleware/rateLimiters";
+import { authRequestLinkLimiter, googleAuthLimiter, phoneVerifySendLimiter, phoneVerifyConfirmLimiter } from "../middleware/rateLimiters";
 
 const router: IRouter = Router();
 
@@ -186,6 +186,74 @@ router.post("/auth/verify", async (req: Request, res: Response): Promise<void> =
   // Pricing note: Stripe Identity costs ~$1.50 USD per successful verification.
   // Recommended threshold: only require KYC for deals above a certain value (e.g. $500 NZD).
   // ─────────────────────────────────────────────────────────────────────────
+});
+
+// ─── POST /auth/google ───────────────────────────────────────
+// Verifies a Google ID token (from Sign in with Google / One Tap).
+// Calls Google's tokeninfo endpoint, checks aud matches our client ID,
+// then upserts the user and creates a session — same flow as magic link.
+router.post("/auth/google", googleAuthLimiter, async (req: Request, res: Response): Promise<void> => {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  if (!clientId) {
+    res.status(503).json({ error: "Google Sign-In is not configured on this server" });
+    return;
+  }
+
+  const { credential } = req.body as { credential?: unknown };
+  if (typeof credential !== "string" || !credential) {
+    res.status(400).json({ error: "Missing Google credential" });
+    return;
+  }
+
+  // Verify the ID token via Google's public endpoint.
+  // This validates the signature AND returns the payload.
+  const tokenRes = await fetch(
+    `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`,
+  );
+  if (!tokenRes.ok) {
+    res.status(401).json({ error: "Invalid Google credential" });
+    return;
+  }
+
+  const payload = await tokenRes.json() as {
+    aud?: string;
+    email?: string;
+    email_verified?: string;
+  };
+
+  // Reject tokens not issued for this app
+  if (payload.aud !== clientId) {
+    res.status(401).json({ error: "Google credential was not issued for this application" });
+    return;
+  }
+
+  if (!payload.email || payload.email_verified !== "true") {
+    res.status(401).json({ error: "Google account email is not verified" });
+    return;
+  }
+
+  const email = payload.email.toLowerCase().trim();
+
+  await db
+    .insert(usersTable)
+    .values({ email, verifiedAt: new Date() })
+    .onConflictDoUpdate({
+      target: usersTable.email,
+      set: { verifiedAt: new Date() },
+    });
+
+  await new Promise<void>((resolve, reject) =>
+    req.session.regenerate((err) => (err ? reject(err) : resolve())),
+  );
+
+  (req.session as { email?: string }).email = email;
+
+  await new Promise<void>((resolve, reject) =>
+    req.session.save((err) => (err ? reject(err) : resolve())),
+  );
+
+  logger.info({ email }, "User authenticated via Google");
+  res.json({ ok: true, email });
 });
 
 // ─── POST /auth/verify-phone/send ───────────────────────────
