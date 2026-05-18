@@ -99,7 +99,7 @@ export default function DealDetail() {
   const [isChatOpen, setIsChatOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const { data: me, isLoading: meLoading, isError: meError } = useGetMe({
+  const { data: me, isLoading: meLoading, isError: meError, isFetching: meFetching } = useGetMe({
     query: { queryKey: getGetMeQueryKey(), retry: false },
   });
 
@@ -274,11 +274,11 @@ export default function DealDetail() {
 
   // ── Loading states ──────────────────────────────────────────────────────────
 
-  if (meLoading || (!deal && !meError && dealLoading)) {
+  if (meLoading || meFetching || (!deal && !meError && dealLoading)) {
     return <Layout><div className="p-12 text-center text-slate-500">Loading…</div></Layout>;
   }
 
-  if (meError) {
+  if (meError && !meFetching) {
     return (
       <Layout>
         <div className="container max-w-sm mx-auto px-4 py-20 text-center">

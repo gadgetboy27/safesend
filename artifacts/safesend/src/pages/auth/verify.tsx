@@ -24,7 +24,11 @@ export default function AuthVerify() {
     mutation: {
       onSuccess: async () => {
         setStatus("success");
-        queryClient.invalidateQueries({ queryKey: getGetMeQueryKey() });
+
+        // Await the me refetch so the cache is fresh before we navigate.
+        // Using invalidateQueries alone leaves the old 401 error in cache,
+        // which causes a sign-in prompt flash on the destination page.
+        await queryClient.refetchQueries({ queryKey: getGetMeQueryKey() });
 
         const rawNext = new URLSearchParams(window.location.search).get("next") ?? "/deals";
         const next = rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/deals";

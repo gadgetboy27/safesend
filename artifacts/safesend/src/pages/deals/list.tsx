@@ -11,7 +11,7 @@ import { useAuthContext } from "@/lib/auth-context";
 export default function MyDeals() {
   const { openSignIn } = useAuthContext();
 
-  const { data: me, isLoading: meLoading, isError: meError } = useGetMe({
+  const { data: me, isLoading: meLoading, isError: meError, isFetching: meFetching } = useGetMe({
     query: { queryKey: getGetMeQueryKey(), retry: false }
   });
 
@@ -20,9 +20,9 @@ export default function MyDeals() {
     { query: { enabled: !!me?.email, queryKey: getListDealsQueryKey() } }
   );
 
-  const isLoading = meLoading || dealsLoading;
+  const isLoading = meLoading || meFetching || dealsLoading;
 
-  if (meError) {
+  if (meError && !meFetching) {
     return (
       <Layout>
         <div className="container max-w-sm mx-auto px-4 py-20 text-center">
