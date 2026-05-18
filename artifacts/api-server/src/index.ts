@@ -4,6 +4,21 @@ import { checkStartupRequirements } from "./lib/startup-check";
 import { verifyShipments, autoReleaseDelivered, autoCancelUnpaid, autoRefundUnshipped, autoRefundExpiredDispute } from "./jobs/verify-shipments";
 import { pollActiveShipments } from "./jobs/poll-shipments";
 
+process.on("uncaughtException", (err) => {
+  logger.error({ err }, "FATAL: uncaughtException — process exiting");
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  logger.error({ reason }, "FATAL: unhandledRejection — process exiting");
+  process.exit(1);
+});
+
+process.on("SIGTERM", () => {
+  logger.info("Received SIGTERM — shutting down gracefully");
+  process.exit(0);
+});
+
 checkStartupRequirements();
 
 const rawPort = process.env["PORT"];
