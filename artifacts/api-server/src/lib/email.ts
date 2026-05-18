@@ -209,7 +209,7 @@ function wrap(body: string): string {
                     <span style="color:#99f6e4;font-size:11px;font-weight:600;background:rgba(255,255,255,0.15);padding:3px 10px;border-radius:20px;margin-left:8px;vertical-align:middle">SECURE ESCROW</span>
                   </td>
                   <td style="text-align:right">
-                    <span style="color:rgba(255,255,255,0.5);font-size:11px">sendsafe.co.nz</span>
+                    <span style="color:rgba(255,255,255,0.5);font-size:11px">safesend.nz</span>
                   </td>
                 </tr>
               </table>

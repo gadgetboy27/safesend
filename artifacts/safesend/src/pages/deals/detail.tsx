@@ -38,6 +38,7 @@ import { Package, Truck, AlertTriangle, XCircle, CreditCard, ExternalLink, Check
 import { format } from "date-fns";
 import { useQueryClient } from "@tanstack/react-query";
 import { PaymentModal } from "@/components/payment-modal";
+import { useAuthContext } from "@/lib/auth-context";
 
 const COURIER_OPTIONS = [
   { value: "nz-post", label: "NZ Post" },
@@ -87,6 +88,7 @@ export default function DealDetail() {
   const queryClient = useQueryClient();
   const [, navigate] = useLocation();
 
+  const { openSignIn } = useAuthContext();
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [paymentClientSecret, setPaymentClientSecret] = useState("");
   const [isShipModalOpen, setIsShipModalOpen] = useState(false);
@@ -285,7 +287,7 @@ export default function DealDetail() {
           <p className="text-slate-600 mb-6">You need to be signed in to access deal details.</p>
           <Button
             className="bg-teal-700 hover:bg-teal-800 text-white"
-            onClick={() => navigate(`/login?next=/deals/${dealId}`)}
+            onClick={openSignIn}
           >
             Sign in
           </Button>

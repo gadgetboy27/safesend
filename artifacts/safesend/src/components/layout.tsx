@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { useGetMe, useLogout, useRequestLoginLink, getGetMeQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
+import { AuthContext } from "@/lib/auth-context";
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location, navigate] = useLocation();
@@ -55,6 +56,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   }
 
   return (
+    <AuthContext.Provider value={{ openSignIn }}>
     <div className="min-h-[100dvh] flex flex-col">
       <Dialog open={signInOpen} onOpenChange={(open) => { setSignInOpen(open); if (!open) setSent(false); }}>
         <DialogContent className="sm:max-w-sm">
@@ -170,9 +172,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <Link href="/privacy" className="hover:text-slate-200 transition-colors">Privacy</Link>
             <a href="mailto:disputes@safesend.nz" className="hover:text-slate-200 transition-colors">Contact / Disputes</a>
           </div>
-          <p className="text-xs text-slate-500">© {new Date().getFullYear()} SafeSend · sendsafe.co.nz · All rights reserved.</p>
+          <p className="text-xs text-slate-500">© {new Date().getFullYear()} SafeSend · safesend.nz · All rights reserved.</p>
         </div>
       </footer>
     </div>
+    </AuthContext.Provider>
   );
 }

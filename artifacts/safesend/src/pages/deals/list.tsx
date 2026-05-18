@@ -1,14 +1,15 @@
-import { Link, useLocation } from "wouter";
+import { Link } from "wouter";
 import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { useListDeals, useGetMe, getListDealsQueryKey, getGetMeQueryKey } from "@workspace/api-client-react";
 import { DealStateBadge } from "@/components/deal-state-badge";
-import { Inbox, ArrowRight, LogIn, Hash } from "lucide-react";
+import { Inbox, ArrowRight, LogIn, Hash, Bell } from "lucide-react";
 import { format } from "date-fns";
+import { useAuthContext } from "@/lib/auth-context";
 
 export default function MyDeals() {
-  const [, navigate] = useLocation();
+  const { openSignIn } = useAuthContext();
 
   const { data: me, isLoading: meLoading, isError: meError } = useGetMe({
     query: { queryKey: getGetMeQueryKey(), retry: false }
@@ -30,7 +31,7 @@ export default function MyDeals() {
           <p className="text-slate-600 mb-6">You need to be signed in to see your deals.</p>
           <Button
             className="bg-teal-700 hover:bg-teal-800 text-white"
-            onClick={() => navigate("/login?next=/deals")}
+            onClick={openSignIn}
           >
             Sign in
           </Button>
@@ -67,16 +68,31 @@ export default function MyDeals() {
         {!isLoading && deals && deals.length > 0 && (
           <div className="grid gap-4 md:grid-cols-2">
             {deals.map((deal) => {
-              const isBuyer = deal.buyerEmail.toLowerCase() === (me?.email ?? "").toLowerCase();
+              const myEmail = (me?.email ?? "").toLowerCase();
+              const isBuyer = deal.buyerEmail.toLowerCase() === myEmail;
+              const isSeller = deal.sellerEmail.toLowerCase() === myEmail;
               const roleLabel = isBuyer ? "Buyer" : "Seller";
+
+              const needsMyAction =
+                (isBuyer && deal.state === "pending_buyer_confirmation") ||
+                (isSeller && deal.state === "pending_seller_acceptance") ||
+                (isBuyer && deal.state === "created") ||
+                (isBuyer && deal.state === "delivered");
 
               return (
                 <Link key={deal.id} href={`/deals/${deal.id}`}>
-                  <Card className="hover:shadow-md transition-shadow cursor-pointer border-slate-200 h-full flex flex-col">
+                  <Card className={`hover:shadow-md transition-shadow cursor-pointer h-full flex flex-col ${needsMyAction ? "border-amber-300 ring-1 ring-amber-200" : "border-slate-200"}`}>
                     <CardHeader className="pb-3">
                       <div className="flex justify-between items-start mb-2">
-                        <DealStateBadge state={deal.state} />
-                        <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2 py-1 rounded">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <DealStateBadge state={deal.state} />
+                          {needsMyAction && (
+                            <span className="flex items-center gap-1 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                              <Bell className="w-3 h-3" /> Action needed
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2 py-1 rounded shrink-0">
                           {roleLabel}
                         </span>
                       </div>
