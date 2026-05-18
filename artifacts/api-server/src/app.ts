@@ -26,6 +26,10 @@ app.set("trust proxy", 1);
 const CANONICAL_HOST = "safesend.nz";
 app.use((req: Request, res: Response, next: NextFunction): void => {
   if (process.env.NODE_ENV !== "production") { next(); return; }
+  // Skip redirect for health checks — Railway probes the container's internal
+  // address so the host header is never "safesend.nz", but the probe must reach
+  // the endpoint directly or the deployment fails in a boot-loop.
+  if (req.path === "/api/healthz" || req.path === "/healthz") { next(); return; }
   const host = (req.headers["x-forwarded-host"] as string | undefined) ?? req.hostname;
   if (host && host !== CANONICAL_HOST) {
     res.redirect(301, `https://${CANONICAL_HOST}${req.url}`);
