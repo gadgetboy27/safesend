@@ -2,7 +2,16 @@ import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { Layout } from "@/components/layout";
-import { useVerifyLoginLink, getGetMeQueryKey } from "@workspace/api-client-react";
+import { useVerifyLoginLink, getGetMeQueryKey, listDeals, DealState } from "@workspace/api-client-react";
+
+const DEAL_URL_RE = /^\/deals\/[^/]+$/;
+
+const URGENT_STATES = new Set<string>([
+  DealState.pending_buyer_confirmation,
+  DealState.pending_seller_acceptance,
+  DealState.created,
+  DealState.delivered,
+]);
 
 export default function AuthVerify() {
   const [, setLocation] = useLocation();
@@ -13,13 +22,28 @@ export default function AuthVerify() {
 
   const verify = useVerifyLoginLink({
     mutation: {
-      onSuccess: (_data, _vars, _ctx) => {
+      onSuccess: async () => {
         setStatus("success");
-        // Invalidate the /auth/me cache so the nav immediately shows the logged-in state
         queryClient.invalidateQueries({ queryKey: getGetMeQueryKey() });
+
         const rawNext = new URLSearchParams(window.location.search).get("next") ?? "/deals";
         const next = rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/deals";
-        setTimeout(() => setLocation(next), 500);
+
+        // Already heading to a specific deal — go straight there.
+        if (DEAL_URL_RE.test(next)) {
+          setTimeout(() => setLocation(next), 500);
+          return;
+        }
+
+        // For any other redirect target (home page, /deals list, /deals/new, etc.)
+        // find the most urgent pending deal and take the user directly to it.
+        try {
+          const deals = await listDeals();
+          const urgent = deals.find(d => URGENT_STATES.has(d.state));
+          setTimeout(() => setLocation(urgent ? `/deals/${urgent.id}` : "/deals"), 500);
+        } catch {
+          setTimeout(() => setLocation("/deals"), 500);
+        }
       },
       onError: (err: unknown) => {
         setStatus("error");
