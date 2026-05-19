@@ -35,6 +35,17 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Package, Truck, AlertTriangle, XCircle, CreditCard, ExternalLink, CheckCircle2, LogIn, ShieldAlert, Send, MessageSquare, Link2, Hash } from "lucide-react";
+
+function maskEmail(email: string): string {
+  const [local, domain] = email.split("@");
+  if (!domain) return email;
+  const visible = local.length > 2 ? local.slice(0, 2) : local.slice(0, 1);
+  return `${visible}***@${domain}`;
+}
+
+function displayParty(name: string | null | undefined, email: string): string {
+  return name ?? maskEmail(email);
+}
 import { format } from "date-fns";
 import { useQueryClient } from "@tanstack/react-query";
 import { PaymentModal } from "@/components/payment-modal";
@@ -278,7 +289,7 @@ export default function DealDetail() {
     return <Layout><div className="p-12 text-center text-slate-500">Loading…</div></Layout>;
   }
 
-  if (meError && !meFetching) {
+  if (meError) {
     return (
       <Layout>
         <div className="container max-w-sm mx-auto px-4 py-20 text-center">
@@ -315,7 +326,7 @@ export default function DealDetail() {
             </div>
             <h1 className="text-2xl font-bold mb-2">{deal.title}</h1>
             <p className="text-slate-500 text-sm mb-6">
-              Listed by <strong>{deal.sellerEmail}</strong> · ${deal.amountNzd.toFixed(2)} NZD + ${deal.feeNzd.toFixed(2)} fee = <strong>${deal.totalNzd.toFixed(2)} NZD total</strong>
+              Listed by <strong>{displayParty(deal.sellerName, deal.sellerEmail)}</strong> · ${deal.amountNzd.toFixed(2)} NZD + ${deal.feeNzd.toFixed(2)} fee = <strong>${deal.totalNzd.toFixed(2)} NZD total</strong>
             </p>
 
             <div className="text-left space-y-3 mb-6">
@@ -363,7 +374,7 @@ export default function DealDetail() {
               </>
             ) : isSeller ? (
               <p className="text-slate-600 text-sm bg-teal-50 border border-teal-100 rounded-lg px-4 py-3">
-                Waiting for the buyer (<strong>{deal.buyerEmail}</strong>) to sign in and confirm they agree to the deal terms.
+                Waiting for the buyer (<strong>{displayParty(deal.buyerName, deal.buyerEmail)}</strong>) to sign in and confirm they agree to the deal terms.
                 You'll receive an email as soon as they do.
               </p>
             ) : (
@@ -393,7 +404,7 @@ export default function DealDetail() {
             </div>
             <h1 className="text-2xl font-bold mb-2">{deal.title}</h1>
             <p className="text-slate-500 text-sm mb-6">
-              Deal from <strong>{deal.buyerEmail}</strong> · ${deal.amountNzd.toFixed(2)} NZD
+              Deal from <strong>{displayParty(deal.buyerName, deal.buyerEmail)}</strong> · ${deal.amountNzd.toFixed(2)} NZD
             </p>
             <p className="text-slate-700 text-sm mb-6 bg-slate-50 rounded-lg px-4 py-3 text-left border border-slate-100">
               {deal.description}
@@ -424,7 +435,7 @@ export default function DealDetail() {
               </>
             ) : isBuyer ? (
               <p className="text-slate-600 text-sm bg-amber-50 border border-amber-100 rounded-lg px-4 py-3">
-                Waiting for the seller (<strong>{deal.sellerEmail}</strong>) to accept the deal terms.
+                Waiting for the seller (<strong>{displayParty(deal.sellerName, deal.sellerEmail)}</strong>) to accept the deal terms.
                 You'll receive an email as soon as they do.
               </p>
             ) : (

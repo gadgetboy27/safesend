@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, or, and, desc, isNull } from "drizzle-orm";
-import { db, dealsTable, dealMessagesTable, consentsTable } from "@workspace/db";
+import { db, dealsTable, dealMessagesTable, consentsTable, usersTable } from "@workspace/db";
 import {
   CreateDealBody,
   GetDealParams,
@@ -57,6 +57,26 @@ function dealToResponse(deal: typeof dealsTable.$inferSelect) {
     feeNzd: Number(deal.feeNzd),
     kycFeeNzd: Number(deal.kycFeeNzd),
     totalNzd: Number(deal.totalNzd),
+  };
+}
+
+// "Henry Peti" → "Henry P."  |  single name → "Henry"  |  null → null
+function formatDisplayName(name: string | null | undefined): string | null {
+  if (!name) return null;
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) return `${parts[0]} ${parts[parts.length - 1][0]}.`;
+  return parts[0];
+}
+
+async function lookupPartyNames(buyerEmail: string, sellerEmail: string) {
+  const users = await db
+    .select({ email: usersTable.email, name: usersTable.name })
+    .from(usersTable)
+    .where(or(eq(usersTable.email, buyerEmail), eq(usersTable.email, sellerEmail)));
+  const byEmail = Object.fromEntries(users.map((u) => [u.email.toLowerCase(), u.name]));
+  return {
+    buyerName: formatDisplayName(byEmail[buyerEmail.toLowerCase()]),
+    sellerName: formatDisplayName(byEmail[sellerEmail.toLowerCase()]),
   };
 }
 
@@ -223,7 +243,8 @@ router.get("/deals/:dealId", requireAuth, async (req, res): Promise<void> => {
     return;
   }
 
-  res.json(GetDealResponse.parse(dealToResponse(deal)));
+  const names = await lookupPartyNames(deal.buyerEmail, deal.sellerEmail);
+  res.json(GetDealResponse.parse({ ...dealToResponse(deal), ...names }));
 });
 
 // ─── POST /deals/:dealId/accept ───────────────────────────────

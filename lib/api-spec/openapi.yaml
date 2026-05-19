@@ -622,6 +622,14 @@ components:
           type: string
         sellerEmail:
           type: string
+        buyerName:
+          type: string
+          nullable: true
+          description: Buyer's verified display name (first name + last initial), or null if not yet set
+        sellerName:
+          type: string
+          nullable: true
+          description: Seller's verified display name (first name + last initial), or null if not yet set
         trackingNumber:
           type: string
           nullable: true

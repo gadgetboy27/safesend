@@ -192,6 +192,8 @@ export const GetDealResponse = zod.object({
   ]),
   buyerEmail: zod.string(),
   sellerEmail: zod.string(),
+  buyerName: zod.string().nullish().describe("Buyer's verified display name, or null if not yet set"),
+  sellerName: zod.string().nullish().describe("Seller's verified display name, or null if not yet set"),
   trackingNumber: zod.string().nullish(),
   courierSlug: zod.string().nullish(),
   disputeReason: zod.string().nullish(),

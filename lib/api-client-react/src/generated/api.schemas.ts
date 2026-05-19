@@ -63,6 +63,10 @@ export interface Deal {
   state: DealState;
   buyerEmail: string;
   sellerEmail: string;
+  /** Buyer's verified display name, or null if not yet set */
+  buyerName?: string | null;
+  /** Seller's verified display name, or null if not yet set */
+  sellerName?: string | null;
   trackingNumber?: string | null;
   courierSlug?: string | null;
   disputeReason?: string | null;
