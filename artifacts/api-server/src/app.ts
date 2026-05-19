@@ -30,6 +30,9 @@ app.use((req: Request, res: Response, next: NextFunction): void => {
   // address so the host header is never "safesend.nz", but the probe must reach
   // the endpoint directly or the deployment fails in a boot-loop.
   if (req.path === "/api/healthz" || req.path === "/healthz") { next(); return; }
+  // Skip redirect for webhooks — Stripe/TrackingMore do not follow 301 redirects,
+  // so redirecting a webhook POST causes silent delivery failure.
+  if (req.path.startsWith("/api/webhooks")) { next(); return; }
   const host = (req.headers["x-forwarded-host"] as string | undefined) ?? req.hostname;
   if (host && host !== CANONICAL_HOST) {
     res.redirect(301, `https://${CANONICAL_HOST}${req.url}`);
