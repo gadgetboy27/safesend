@@ -47,9 +47,10 @@ router.post("/auth/request-link", authRequestLinkLimiter, async (req: Request, r
 
   const { email, returnPath } = parsed;
   const token = randomUUID();
+  const pollToken = randomUUID();
   const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
 
-  await db.insert(magicLinkTokensTable).values({ email, token, expiresAt });
+  await db.insert(magicLinkTokensTable).values({ email, token, pollToken, expiresAt });
 
   // REPLIT_DEV_DOMAIN is already the full hostname (e.g. abc-xyz.janeway.replit.dev)
   const baseUrl =
@@ -80,6 +81,7 @@ router.post("/auth/request-link", authRequestLinkLimiter, async (req: Request, r
   // shortcut — useful whether or not RESEND_API_KEY is configured.
   res.json({
     ok: true,
+    pollToken,
     message: isDev ? "Dev mode: use the link below to sign in." : "Check your email for a sign-in link.",
     ...(isDev && { devLink: magicLink }),
   });
@@ -186,6 +188,56 @@ router.post("/auth/verify", async (req: Request, res: Response): Promise<void> =
   // Pricing note: Stripe Identity costs ~$1.50 USD per successful verification.
   // Recommended threshold: only require KYC for deals above a certain value (e.g. $500 NZD).
   // ─────────────────────────────────────────────────────────────────────────
+});
+
+// ─── GET /auth/poll/:pollToken ───────────────────────────────
+// Lets the requesting device detect when the magic link was clicked on another
+// device and automatically acquire its own session.  The pollToken is returned
+// by POST /auth/request-link and is never included in the emailed link, so
+// only the original requesting browser can use it.
+router.get("/auth/poll/:pollToken", async (req: Request, res: Response): Promise<void> => {
+  const { pollToken } = req.params;
+  if (typeof pollToken !== "string" || !UUID_RE.test(pollToken)) {
+    res.status(400).json({ error: "Invalid poll token" });
+    return;
+  }
+
+  // Already authenticated on this device — nothing to poll.
+  if ((req.session as { email?: string }).email) {
+    res.json({ verified: true });
+    return;
+  }
+
+  const { rows } = await pool.query<{ email: string }>(
+    `SELECT email FROM magic_link_tokens
+     WHERE poll_token = $1 AND used = true AND expires_at > NOW()
+     LIMIT 1`,
+    [pollToken],
+  );
+  const row = rows[0];
+
+  if (!row) {
+    res.json({ verified: false });
+    return;
+  }
+
+  // Link was clicked — give this device its own session too.
+  await new Promise<void>((resolve, reject) =>
+    req.session.regenerate((err) => (err ? reject(err) : resolve())),
+  );
+  (req.session as { email?: string }).email = row.email;
+  await new Promise<void>((resolve, reject) =>
+    req.session.save((err) => (err ? reject(err) : resolve())),
+  );
+
+  // Invalidate the poll token so it can't be replayed.
+  await pool.query(
+    `UPDATE magic_link_tokens SET poll_token = NULL WHERE poll_token = $1`,
+    [pollToken],
+  );
+
+  logger.info({ email: row.email }, "User authenticated via cross-device poll");
+  res.json({ verified: true, email: row.email });
 });
 
 // ─── POST /auth/google ───────────────────────────────────────

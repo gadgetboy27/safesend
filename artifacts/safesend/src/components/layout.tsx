@@ -39,6 +39,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [signInOpen, setSignInOpen] = useState(false);
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
+  const [pollToken, setPollToken] = useState<string | null>(null);
 
   const { data: me } = useGetMe({ query: { retry: false, queryKey: getGetMeQueryKey() } });
   const isAuthenticated = me !== undefined;
@@ -113,9 +114,37 @@ export function Layout({ children }: { children: React.ReactNode }) {
     },
   });
 
+  // Poll for cross-device magic-link verification.
+  // When the user opens the email on their phone and clicks the link there,
+  // this polling loop detects it and logs the waiting desktop in too.
+  useEffect(() => {
+    if (!sent || !pollToken || isAuthenticated) return;
+
+    let cancelled = false;
+    const interval = setInterval(async () => {
+      if (cancelled) return;
+      try {
+        const res = await fetch(`/api/auth/poll/${pollToken}`);
+        if (!res.ok) return;
+        const data = await res.json() as { verified: boolean };
+        if (data.verified) {
+          clearInterval(interval);
+          setSignInOpen(false);
+          await queryClient.refetchQueries({ queryKey: getGetMeQueryKey() });
+        }
+      } catch { /* network error — keep polling */ }
+    }, 3000);
+
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [sent, pollToken, isAuthenticated]);
+
   const requestLink = useRequestLoginLink({
     mutation: {
-      onSuccess: () => setSent(true),
+      onSuccess: (data) => {
+        setSent(true);
+        const d = data as { pollToken?: string };
+        if (d.pollToken) setPollToken(d.pollToken);
+      },
       onError: (err: unknown) => {
         toast({
           title: "Error",
@@ -129,6 +158,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   function openSignIn() {
     setEmail("");
     setSent(false);
+    setPollToken(null);
     setSignInOpen(true);
   }
 
@@ -145,7 +175,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   return (
     <AuthContext.Provider value={{ openSignIn }}>
     <div className="min-h-[100dvh] flex flex-col">
-      <Dialog open={signInOpen} onOpenChange={(open) => { setSignInOpen(open); if (!open) setSent(false); }}>
+      <Dialog open={signInOpen} onOpenChange={(open) => { setSignInOpen(open); if (!open) { setSent(false); setPollToken(null); } }}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>{sent ? "Check your email" : "Sign in to SafeSend"}</DialogTitle>

@@ -7,6 +7,7 @@ export const magicLinkTokensTable = pgTable("magic_link_tokens", {
   id: text("id").primaryKey().$defaultFn(() => randomUUID()),
   email: text("email").notNull(),
   token: text("token").notNull().unique(),
+  pollToken: text("poll_token").unique(),
   used: boolean("used").notNull().default(false),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
